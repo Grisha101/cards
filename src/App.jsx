@@ -584,7 +584,7 @@ export default function App() {
   const CardsTab = (
     <div style={{
       flex: 1, display: "flex", flexDirection: "column",
-      padding: "12px 16px 12px", gap: 10,
+      padding: "12px 8px 12px", gap: 10,
       minHeight: 0, height: "100%",
     }}>
 
@@ -662,7 +662,7 @@ export default function App() {
 
   /* ── CREATE TAB ─────────────────────────── */
   const CreateTab = (
-    <div style={{ padding: "20px 16px 40px" }}>
+    <div style={{ padding: "20px 8px 40px" }}>
       <h2 style={sectionTitle}>✏️ Створити словник</h2>
 
       <input
@@ -705,7 +705,7 @@ export default function App() {
 
   /* ── SETTINGS TAB ────────────────────────── */
   const SettingsTab = (
-    <div style={{ padding: "20px 16px 40px" }}>
+    <div style={{ padding: "20px 8px 40px" }}>
       <h2 style={sectionTitle}>⚙️ Налаштування</h2>
 
       <SettingRow label="Авто-озвучення" desc="Говорити слово при переході до нової картки">
@@ -831,8 +831,10 @@ export default function App() {
         body { background: ${C.paper}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%; }
         html { height: 100%; }
         #root { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-        .tab-scroll { overflow-y: scroll; scrollbar-width: none; -ms-overflow-style: none; }
+        .tab-scroll-outer { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+        .tab-scroll { flex: 1; overflow-y: scroll; margin-right: -20px; padding-right: 20px; display: flex; flex-direction: column; }
         .tab-scroll::-webkit-scrollbar { display: none; }
+        .tab-scroll { scrollbar-width: none; -ms-overflow-style: none; }
         button { font-family: 'DM Sans', sans-serif; }
       `}</style>
 
@@ -844,7 +846,7 @@ export default function App() {
       }}>
         {/* HEADER — fixed height, no layout shift between tabs */}
         <header style={{
-          padding: "14px 20px 12px",
+          padding: "14px 8px 12px",
           borderBottom: `1px solid ${C.soft}`,
           background: "rgba(250,248,243,0.9)",
           backdropFilter: "blur(8px)",
@@ -911,8 +913,8 @@ export default function App() {
         </header>
 
         {/* CONTENT */}
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <div className="tab-scroll" style={{ flex: 1, overflowY: "scroll", display: "flex", flexDirection: "column" }}>
+        <div className="tab-scroll-outer">
+          <div className="tab-scroll">
             {tab === "cards"    ? CardsTab    : null}
             {tab === "create"   ? CreateTab   : null}
             {tab === "settings" ? SettingsTab : null}
