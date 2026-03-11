@@ -434,7 +434,7 @@ function CardEditRow({ card, num, onChange, onDelete }) {
 
   return (
     <div style={{
-      background: C.white, borderRadius: 14, padding: "12px 10px", marginBottom: 10,
+      background: C.white, borderRadius: 14, padding: "12px 8px", marginBottom: 10,
       border: `1.5px solid ${C.soft}`, boxShadow: "0 2px 6px rgba(26,26,46,0.05)",
     }}>
       {/* Word row */}
@@ -633,7 +633,7 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
 
       {/* Cards list */}
       <div className="tab-scroll" style={{ flex: 1 }}>
-        <div style={{ padding: "14px 4px 48px" }}>
+        <div style={{ padding: "14px 0 48px" }}>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>
             {editCards.length} {editCards.length === 1 ? "картка" : "карток"} · редагуй будь-яке поле
           </div>
@@ -840,7 +840,7 @@ export default function App() {
 
   /* ── CARDS TAB ── */
   const CardsTab = (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "12px 4px 12px", gap: 10, minHeight: 0, height: "100%" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "12px 0 12px", gap: 10, minHeight: 0, height: "100%" }}>
       <div style={{ display: "flex", justifyContent: "center", gap: 8, flexShrink: 0 }}>
         <Stat val={data.xp} lbl="XP" />
         <Stat val={data.level} lbl="Рівень" />
@@ -899,7 +899,7 @@ export default function App() {
 
   /* ── CREATE TAB ── */
   const CreateTab = (
-    <div style={{ padding: "20px 4px 40px" }}>
+    <div style={{ padding: "20px 0 40px" }}>
       <h2 style={sectionTitle}>✏️ Створити словник</h2>
       <input style={inputStyle} placeholder="Назва словника (напр. Урок 3)" value={newName} onChange={e => setNewName(e.target.value)} />
       <div style={{ background: "#f5f3ee", borderRadius: 8, padding: "8px 12px", marginBottom: 8, fontFamily: "monospace", fontSize: 11, color: C.muted }}>
@@ -917,7 +917,7 @@ export default function App() {
 
       <h2 style={{ ...sectionTitle, marginTop: 32 }}>📚 Мої словники</h2>
       {dictNames.map(n => (
-        <div key={n} style={{ background: C.white, borderRadius: 14, padding: "14px 10px", marginBottom: 10, border: `1.5px solid ${C.soft}`, boxShadow: "0 2px 8px rgba(26,26,46,0.06)" }}>
+        <div key={n} style={{ background: C.white, borderRadius: 14, padding: "12px 8px", marginBottom: 10, border: `1.5px solid ${C.soft}`, boxShadow: "0 2px 8px rgba(26,26,46,0.06)" }}>
           <div style={{ display: "flex", alignItems: "center" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, color: C.ink, fontSize: 15 }}>{displayName(n)}</div>
@@ -937,12 +937,12 @@ export default function App() {
 
   /* ── SETTINGS TAB ── */
   const SettingsTab = (
-    <div style={{ padding: "20px 4px 40px" }}>
+    <div style={{ padding: "20px 0 40px" }}>
       <h2 style={sectionTitle}>⚙️ Налаштування</h2>
       <SettingRow label="Авто-озвучення" desc="Говорити слово при переході до нової картки">
         <Toggle value={autoSpeak} onChange={setAutoSpeak} />
       </SettingRow>
-      <div style={{ background: C.white, borderRadius: 16, padding: "16px 12px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
+      <div style={{ background: C.white, borderRadius: 16, padding: "16px 10px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: C.ink, marginBottom: 4 }}>🎙️ Голос — {LANGUAGES[activeLang]?.label}</div>
         {sysVoices.length > 0 && (
           <>
@@ -950,7 +950,7 @@ export default function App() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
               {sysVoices.map(v => (
                 <div key={v.name} onClick={() => { selectVoice(v.name); speak(LANGUAGES[activeLang]?.sample || v.name); }}
-                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 10px", borderRadius: 10, cursor: "pointer", border: `1.5px solid ${selectedVoiceName === v.name ? C.terra : C.border}`, background: selectedVoiceName === v.name ? "#fdf2ee" : C.paper, transition: "all 0.15s" }}>
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 8px", borderRadius: 10, cursor: "pointer", border: `1.5px solid ${selectedVoiceName === v.name ? C.terra : C.border}`, background: selectedVoiceName === v.name ? "#fdf2ee" : C.paper, transition: "all 0.15s" }}>
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{v.name}</div>
                     <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{v.lang} · {v.localService ? "локальний" : "✨ онлайн"}</div>
@@ -975,7 +975,7 @@ export default function App() {
                 const isSel = selectedVoiceName === key;
                 return (
                   <div key={key} onClick={() => { if (!rvReady) return; selectVoice(key); speak(LANGUAGES[activeLang]?.sample || ""); }}
-                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 10px", borderRadius: 10, cursor: rvReady ? "pointer" : "not-allowed", border: `1.5px solid ${isSel ? C.terra : C.border}`, background: isSel ? "#fdf2ee" : rvReady ? C.paper : "#f8f8f8", opacity: rvReady ? 1 : 0.55, transition: "all 0.15s" }}>
+                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 8px", borderRadius: 10, cursor: rvReady ? "pointer" : "not-allowed", border: `1.5px solid ${isSel ? C.terra : C.border}`, background: isSel ? "#fdf2ee" : rvReady ? C.paper : "#f8f8f8", opacity: rvReady ? 1 : 0.55, transition: "all 0.15s" }}>
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{rv.label}</div>
                       <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>ResponsiveVoice · ☁️ онлайн</div>
@@ -1002,7 +1002,7 @@ export default function App() {
       <SettingRow label="Скинути прогрес" desc="Видалити весь прогрес навчання та XP">
         <Btn variant="again" onClick={() => { if (window.confirm("Скинути весь прогрес?")) { persist({ ...data, progress: {}, xp: 0, level: 1 }); showToast("✅ Прогрес скинуто"); } }}>Скинути</Btn>
       </SettingRow>
-      <div style={{ background: C.white, borderRadius: 16, padding: 18, border: `1.5px solid ${C.soft}`, lineHeight: 1.8 }}>
+      <div style={{ background: C.white, borderRadius: 16, padding: "14px 10px", border: `1.5px solid ${C.soft}`, lineHeight: 1.8 }}>
         <div style={{ fontWeight: 700, color: C.ink, marginBottom: 8 }}>Про застосунок</div>
         <div style={{ fontSize: 13, color: C.muted }}>Flashcards · Spaced Repetition</div>
         <div style={{ fontSize: 13, color: C.muted }}>Словників: {dictNames.length} · Слів: {Object.values(data.dictionaries).flat().length}</div>
@@ -1057,7 +1057,7 @@ export default function App() {
       <div style={outerDiv}>
         {/* HEADER */}
         <header style={{
-          padding: "0 4px", height: 64, flexShrink: 0,
+          padding: "0 6px", height: 64, flexShrink: 0,
           borderBottom: `1px solid ${C.soft}`,
           background: "rgba(250,248,243,0.9)", backdropFilter: "blur(8px)",
           position: "sticky", top: 0, zIndex: 10,
@@ -1159,7 +1159,7 @@ function Toast({ toast }) {
 
 function SettingRow({ label, desc, children }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.white, borderRadius: 16, padding: "16px 12px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.white, borderRadius: 16, padding: "16px 10px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
       <div style={{ flex: 1, marginRight: 16 }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>{label}</div>
         <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{desc}</div>
