@@ -1018,7 +1018,7 @@ export default function App() {
   /* ── SHARED STYLES ── */
   const globalStyle = `
     @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@400;500;600&display=swap');
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; padding: 0; }
     html { height: 100%; -webkit-text-size-adjust: none; text-size-adjust: none; }
     body { background: ${C.paper}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%; }
     #root { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
