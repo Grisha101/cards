@@ -584,7 +584,8 @@ export default function App() {
   const CardsTab = (
     <div style={{
       flex: 1, display: "flex", flexDirection: "column",
-      padding: "12px 16px 12px", overflow: "hidden", gap: 10,
+      padding: "12px 16px 12px", gap: 10,
+      minHeight: 0, height: "100%",
     }}>
 
       {/* Stats row */}
@@ -830,7 +831,8 @@ export default function App() {
         body { background: ${C.paper}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%; }
         html { height: 100%; }
         #root { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-        ::-webkit-scrollbar { display: none; }
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+        * { scrollbar-width: none; }
         button { font-family: 'DM Sans', sans-serif; }
       `}</style>
 
@@ -910,12 +912,11 @@ export default function App() {
 
         {/* CONTENT */}
         <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          {tab === "cards" ? CardsTab : (
-            <div style={{ flex: 1, overflowY: "auto" }}>
-              {tab === "create"   ? CreateTab   : null}
-              {tab === "settings" ? SettingsTab : null}
-            </div>
-          )}
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+            {tab === "cards"    ? CardsTab    : null}
+            {tab === "create"   ? CreateTab   : null}
+            {tab === "settings" ? SettingsTab : null}
+          </div>
         </div>
 
         {/* BOTTOM NAV — slightly taller padding */}
