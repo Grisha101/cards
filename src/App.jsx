@@ -831,8 +831,8 @@ export default function App() {
         body { background: ${C.paper}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%; }
         html { height: 100%; }
         #root { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-        ::-webkit-scrollbar { width: 0px; background: transparent; }
-        * { scrollbar-width: none; }
+        .tab-scroll { overflow-y: scroll; scrollbar-width: none; -ms-overflow-style: none; }
+        .tab-scroll::-webkit-scrollbar { display: none; }
         button { font-family: 'DM Sans', sans-serif; }
       `}</style>
 
@@ -912,7 +912,7 @@ export default function App() {
 
         {/* CONTENT */}
         <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+          <div className="tab-scroll" style={{ flex: 1, overflowY: "scroll", display: "flex", flexDirection: "column" }}>
             {tab === "cards"    ? CardsTab    : null}
             {tab === "create"   ? CreateTab   : null}
             {tab === "settings" ? SettingsTab : null}
