@@ -96,25 +96,108 @@ function useToast() {
   return { toast, show };
 }
 
+// Some voices sound unnaturally low — these need pitch correction
+const LOW_PITCH_VOICES = /google|microsoft|samsung|android|ivona/i;
+
+function getVoiceParams(voice) {
+  // Online/cloud voices often have built-in naturalness, use neutral params
+  // Local TTS engines on Android tend to sound low — bump pitch up
+  if (!voice) return { rate: 0.82, pitch: 1.0 };
+  if (LOW_PITCH_VOICES.test(voice.name)) return { rate: 0.82, pitch: 1.35 };
+  return { rate: 0.82, pitch: 1.0 };
+}
+
+function dedupeVoices(voices) {
+  // Deduplicate by name (some browsers list same voice multiple times with different langs)
+  const seen = new Set();
+  return voices.filter(v => {
+    const key = v.name.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function useSpeech() {
+  const [voices, setVoices] = useState([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState(
+    () => localStorage.getItem("ifc_voice") || ""
+  );
   const voiceRef = useRef(null);
+
   useEffect(() => {
-    const pick = () => {
+    const load = () => {
       const all = window.speechSynthesis.getVoices();
-      const it = all.filter(v => v.lang.toLowerCase().startsWith("it"));
-      voiceRef.current = it.find(v => !v.localService) || it.find(v => /alice|bianca|luca|federica/i.test(v.name)) || it[0] || null;
+      const itAll = dedupeVoices(all.filter(v => v.lang.toLowerCase().startsWith("it")));
+      const finalVoices = itAll;
+      if (!finalVoices.length) return;
+      setVoices(finalVoices);
+      const saved = localStorage.getItem("ifc_voice");
+      const match = saved ? finalVoices.find(v => v.name === saved) : null;
+      voiceRef.current = match
+        || finalVoices.find(v => !v.localService)
+        || finalVoices.find(v => /alice|bianca|luca|federica/i.test(v.name))
+        || finalVoices[0];
+      if (!saved) setSelectedVoiceName(voiceRef.current?.name || "");
     };
-    window.speechSynthesis.onvoiceschanged = pick;
-    pick(); setTimeout(pick, 500); setTimeout(pick, 1500);
+    window.speechSynthesis.onvoiceschanged = load;
+    load(); setTimeout(load, 500); setTimeout(load, 1500);
   }, []);
 
-  return useCallback((text) => {
+  const selectVoice = useCallback((name) => {
+    const v = voices.find(v => v.name === name);
+    voiceRef.current = v || voiceRef.current;
+    setSelectedVoiceName(name);
+    localStorage.setItem("ifc_voice", name);
+  }, [voices]);
+
+  const speak = useCallback((text) => {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = "it-IT"; u.rate = 0.82; u.pitch = 0.92; u.volume = 1;
+    const { rate, pitch } = getVoiceParams(voiceRef.current);
+    u.lang = "it-IT"; u.rate = rate; u.pitch = pitch; u.volume = 1;
     if (voiceRef.current) u.voice = voiceRef.current;
     window.speechSynthesis.speak(u);
   }, []);
+
+  return { speak, voices, selectedVoiceName, selectVoice };
+}
+
+/* ═══════════════════════════════════════════════
+   PWA INSTALL HOOK
+═══════════════════════════════════════════════ */
+function useInstallPrompt() {
+  const [prompt, setPrompt]       = useState(null);
+  const [installed, setInstalled] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches
+    || window.navigator.standalone === true;
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+    }
+    if (isStandalone) { setInstalled(true); return; }
+    const handler = (e) => { e.preventDefault(); setPrompt(e); };
+    window.addEventListener("beforeinstallprompt", handler);
+    window.addEventListener("appinstalled", () => setInstalled(true));
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const install = async () => {
+    if (!prompt) return;
+    prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    if (outcome === "accepted") setInstalled(true);
+    setPrompt(null);
+  };
+
+  const dismiss = () => setDismissed(true);
+  const canInstall = !installed && !dismissed && (!!prompt || isIos);
+
+  return { canInstall, install, installed, isIos, dismiss };
 }
 
 /* ═══════════════════════════════════════════════
@@ -234,7 +317,9 @@ export default function App() {
   const [newName, setNewName] = useState("");
   const [jsonInput, setJsonInput] = useState("");
   const { toast, show: showToast } = useToast();
-  const speak = useSpeech();
+  const { speak, voices, selectedVoiceName, selectVoice } = useSpeech();
+  const { canInstall, install, installed, isIos, dismiss } = useInstallPrompt();
+  const [showIosModal, setShowIosModal] = useState(false);
 
   const words = data.dictionaries[dictName] || [];
   const word  = words[idx] || { word: "—", translation: "—" };
@@ -426,6 +511,60 @@ export default function App() {
         <Toggle value={autoSpeak} onChange={setAutoSpeak} />
       </SettingRow>
 
+      {/* VOICE SELECTOR */}
+      <div style={{ background: C.white, borderRadius: 16, padding: "16px 18px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: C.ink, marginBottom: 4 }}>🎙️ Голос озвучення</div>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
+          {voices.length === 0 ? "Голоси завантажуються..." : `${voices.length} голос${voices.length === 1 ? "" : voices.length < 5 ? "и" : "ів"} доступно`}
+        </div>
+        {voices.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {voices.map(v => (
+              <div key={v.name} onClick={() => { selectVoice(v.name); speak("Ciao, come stai?"); }}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "10px 14px", borderRadius: 10, cursor: "pointer",
+                  border: `1.5px solid ${selectedVoiceName === v.name ? C.terra : C.border}`,
+                  background: selectedVoiceName === v.name ? "#fdf2ee" : C.paper,
+                  transition: "all 0.15s",
+                }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{v.name}</div>
+                  <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                    {v.lang} · {v.localService ? "локальний" : "✨ онлайн"}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {selectedVoiceName === v.name && (
+                    <span style={{ fontSize: 11, color: C.terra, fontWeight: 700 }}>✓ обрано</span>
+                  )}
+                  <span style={{ fontSize: 18 }}>🔊</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* INSTALL ROW */}
+      {!installed ? (
+        <SettingRow
+          label="📲 Додати на екран"
+          desc={isIos ? "Інструкція для Safari на iPhone" : "Встановити як додаток на телефон"}
+        >
+          <Btn variant="terra" onClick={() => {
+            if (isIos) setShowIosModal(true);
+            else if (canInstall) install();
+          }}>
+            {isIos ? "Як?" : "Встановити"}
+          </Btn>
+        </SettingRow>
+      ) : (
+        <SettingRow label="✅ Додаток встановлено" desc="Відкривай з домашнього екрану">
+          <span style={{ fontSize: 22 }}>🎉</span>
+        </SettingRow>
+      )}
+
       <SettingRow label="Скинути прогрес" desc="Видалити весь прогрес навчання та XP">
         <Btn variant="again" onClick={() => {
           if (window.confirm("Скинути весь прогрес?")) {
@@ -451,15 +590,18 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@400;500;600&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: ${C.paper}; font-family: 'DM Sans', sans-serif; }
+        body { background: ${C.paper}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%; }
+        html { height: 100%; }
+        #root { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
         ::-webkit-scrollbar { display: none; }
         button { font-family: 'DM Sans', sans-serif; }
       `}</style>
 
       <div style={{
-        minHeight: "100vh", background: C.paper,
+        height: "100vh", height: "100dvh", background: C.paper,
         backgroundImage: `radial-gradient(ellipse 80% 50% at 15% 5%, rgba(192,88,58,0.07) 0%, transparent 60%), radial-gradient(ellipse 60% 40% at 85% 85%, rgba(107,143,113,0.08) 0%, transparent 60%)`,
         display: "flex", flexDirection: "column", maxWidth: 520, margin: "0 auto",
+        overflow: "hidden",
       }}>
         {/* HEADER */}
         <header style={{ textAlign: "center", padding: "24px 20px 16px", borderBottom: `1px solid ${C.soft}`, background: "rgba(250,248,243,0.9)", backdropFilter: "blur(8px)", position: "sticky", top: 0, zIndex: 10 }}>
@@ -470,6 +612,34 @@ export default function App() {
             Spaced repetition · Ukrainian translations
           </p>
         </header>
+
+        {/* PWA INSTALL BANNER */}
+        {canInstall && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            background: `linear-gradient(135deg, ${C.terra}, #a84730)`,
+            padding: "12px 16px", gap: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 22 }}>📲</span>
+              <div>
+                <div style={{ color: C.white, fontWeight: 700, fontSize: 13 }}>Додати на екран</div>
+                <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 11 }}>Працює без інтернету</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <button onClick={() => isIos ? setShowIosModal(true) : install()} style={{
+                background: C.white, color: C.terra, border: "none",
+                borderRadius: 8, padding: "7px 14px", fontWeight: 700,
+                fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+              }}>{isIos ? "Як?" : "Встановити"}</button>
+              <button onClick={dismiss} style={{
+                background: "rgba(255,255,255,0.2)", color: C.white, border: "none",
+                borderRadius: 8, padding: "7px 10px", fontSize: 13, cursor: "pointer",
+              }}>✕</button>
+            </div>
+          </div>
+        )}
 
         {/* CONTENT */}
         <div style={{ flex: 1, overflowY: "auto" }}>
@@ -508,6 +678,51 @@ export default function App() {
         </div>
       )}
       <style>{`@keyframes fadeUp { from { opacity:0; transform:translateX(-50%) translateY(10px) } to { opacity:1; transform:translateX(-50%) translateY(0) } }`}</style>
+
+      {/* iOS INSTALL MODAL */}
+      {showIosModal && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+          zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center",
+        }} onClick={() => setShowIosModal(false)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: C.white, borderRadius: "20px 20px 0 0",
+            padding: "24px 24px 40px", width: "100%", maxWidth: 520,
+            boxShadow: "0 -8px 40px rgba(0,0,0,0.2)",
+          }}>
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>📲</div>
+              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.ink }}>
+                Додати на екран
+              </div>
+              <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>Три кроки в Safari</div>
+            </div>
+            {[
+              { num: "1", icon: "⬆️", text: 'Натисни кнопку "Поділитись"', sub: "квадрат зі стрілкою внизу Safari" },
+              { num: "2", icon: "➕", text: 'Обери "На екран Дому"', sub: 'прокрути список вниз якщо не видно' },
+              { num: "3", icon: "✅", text: "Натисни «Додати»", sub: "іконка з'явиться на домашньому екрані" },
+            ].map(({ num, icon, text, sub }) => (
+              <div key={num} style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: 12, background: C.terra,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 18, flexShrink: 0,
+                }}>{icon}</div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: C.ink }}>{text}</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>{sub}</div>
+                </div>
+              </div>
+            ))}
+            <button onClick={() => setShowIosModal(false)} style={{
+              width: "100%", padding: "13px", borderRadius: 12,
+              background: C.terra, color: C.white, border: "none",
+              fontWeight: 700, fontSize: 15, cursor: "pointer",
+              fontFamily: "'DM Sans', sans-serif", marginTop: 4,
+            }}>Зрозуміло!</button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
