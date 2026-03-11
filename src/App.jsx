@@ -28,7 +28,11 @@ const C = {
 const LANGUAGES = {
   it: {
     code: "it", label: "Italiano", ttsLang: "it-IT",
-    voiceKey: "ifc_voice_it",
+    voiceKey: "ifc_voice_it", sample: "Ciao, come stai?",
+    rvVoices: [
+      { name: "Italian Female", label: "Italiana (жін.)" },
+      { name: "Italian Male",   label: "Italiano (чол.)" },
+    ],
     flag: (
       <svg width="22" height="16" viewBox="0 0 22 16" style={{ borderRadius: 3, flexShrink: 0 }}>
         <rect width="22" height="16" fill="#009246"/>
@@ -39,11 +43,34 @@ const LANGUAGES = {
   },
   pl: {
     code: "pl", label: "Polski", ttsLang: "pl-PL",
-    voiceKey: "ifc_voice_pl",
+    voiceKey: "ifc_voice_pl", sample: "Cześć, jak się masz?",
+    rvVoices: [
+      { name: "Polish Female", label: "Polska (жін.)" },
+      { name: "Polish Male",   label: "Polski (чол.)" },
+    ],
     flag: (
       <svg width="22" height="16" viewBox="0 0 22 16" style={{ borderRadius: 3, flexShrink: 0 }}>
         <rect width="22" height="16" fill="#fff"/>
         <rect y="8" width="22" height="8" fill="#dc143c"/>
+      </svg>
+    ),
+  },
+  en: {
+    code: "en", label: "English", ttsLang: "en-GB",
+    voiceKey: "ifc_voice_en", sample: "Hello, how are you?",
+    rvVoices: [
+      { name: "UK English Female", label: "British (жін.)" },
+      { name: "UK English Male",   label: "British (чол.)" },
+      { name: "US English Female", label: "American (жін.)" },
+      { name: "US English Male",   label: "American (чол.)" },
+    ],
+    flag: (
+      <svg width="22" height="16" viewBox="0 0 22 16" style={{ borderRadius: 3, flexShrink: 0 }}>
+        <rect width="22" height="16" fill="#012169"/>
+        <path d="M0,0 L22,16 M22,0 L0,16" stroke="#fff" strokeWidth="3"/>
+        <path d="M0,0 L22,16 M22,0 L0,16" stroke="#C8102E" strokeWidth="1.8"/>
+        <path d="M11,0 V16 M0,8 H22" stroke="#fff" strokeWidth="4.5"/>
+        <path d="M11,0 V16 M0,8 H22" stroke="#C8102E" strokeWidth="2.5"/>
       </svg>
     ),
   },
@@ -93,6 +120,33 @@ const DEFAULT_DATA = {
       { word: "herbata",      translation: "чай" },
       { word: "samochód",     translation: "машина" },
       { word: "pociąg",       translation: "потяг" },
+    ],
+    "en:Базові слова": [
+      { word: "hello",        translation: "привіт" },
+      { word: "thank you",    translation: "дякую" },
+      { word: "please",       translation: "будь ласка" },
+      { word: "house",        translation: "будинок" },
+      { word: "water",        translation: "вода" },
+      { word: "love",         translation: "кохання" },
+      { word: "to eat",       translation: "їсти" },
+      { word: "beautiful",    translation: "красивий" },
+      { word: "friend",       translation: "друг" },
+      { word: "good morning", translation: "добрий ранок" },
+      { word: "night",        translation: "ніч" },
+      { word: "sun",          translation: "сонце" },
+      { word: "yes",          translation: "так" },
+      { word: "no",           translation: "ні" },
+      { word: "sorry",        translation: "вибачте" },
+      { word: "good",         translation: "добре / гарний" },
+      { word: "city",         translation: "місто" },
+      { word: "street",       translation: "вулиця" },
+      { word: "shop",         translation: "магазин" },
+      { word: "bread",        translation: "хліб" },
+      { word: "milk",         translation: "молоко" },
+      { word: "coffee",       translation: "кава" },
+      { word: "tea",          translation: "чай" },
+      { word: "car",          translation: "машина" },
+      { word: "train",        translation: "потяг" },
     ],
   },
   progress: {},
@@ -182,48 +236,81 @@ function dedupeVoices(voices) {
   });
 }
 
+// RV prefix used to distinguish ResponsiveVoice selections from system voices
+const RV_PREFIX = "rv:";
+
+function rvSpeak(rvName, text, sample) {
+  if (typeof window.responsiveVoice === "undefined") return false;
+  window.responsiveVoice.speak(text || sample, rvName, { rate: 0.9, pitch: 1, volume: 1 });
+  return true;
+}
+
 function useSpeech(langCode) {
   const lang = LANGUAGES[langCode] || LANGUAGES.it;
-  const [voices, setVoices] = useState([]);
+  const [sysVoices, setSysVoices] = useState([]);
+  const [rvReady, setRvReady] = useState(false);
   const [selectedVoiceName, setSelectedVoiceName] = useState(
     () => localStorage.getItem(lang.voiceKey) || ""
   );
-  const voiceRef = useRef(null);
+  const voiceRef = useRef(null); // system SpeechSynthesisVoice or null for RV
 
+  // Load system voices
   useEffect(() => {
     const load = () => {
       const all = window.speechSynthesis.getVoices();
       const langVoices = dedupeVoices(all.filter(v => v.lang.toLowerCase().startsWith(lang.code)));
-      if (!langVoices.length) return;
-      setVoices(langVoices);
+      setSysVoices(langVoices);
       const saved = localStorage.getItem(lang.voiceKey);
-      const match = saved ? langVoices.find(v => v.name === saved) : null;
-      voiceRef.current = match
-        || langVoices.find(v => !v.localService)
-        || langVoices[0];
-      if (!saved) setSelectedVoiceName(voiceRef.current?.name || "");
+      if (saved && saved.startsWith(RV_PREFIX)) {
+        voiceRef.current = null; // RV mode
+        setSelectedVoiceName(saved);
+      } else {
+        const match = saved ? langVoices.find(v => v.name === saved) : null;
+        voiceRef.current = match || langVoices.find(v => !v.localService) || langVoices[0] || null;
+        if (!saved && voiceRef.current) setSelectedVoiceName(voiceRef.current.name);
+      }
     };
     window.speechSynthesis.onvoiceschanged = load;
     load(); setTimeout(load, 500); setTimeout(load, 1500);
   }, [langCode]);
 
+  // Detect ResponsiveVoice ready
+  useEffect(() => {
+    if (typeof window.responsiveVoice !== "undefined") { setRvReady(true); return; }
+    const t = setInterval(() => {
+      if (typeof window.responsiveVoice !== "undefined") { setRvReady(true); clearInterval(t); }
+    }, 300);
+    return () => clearInterval(t);
+  }, []);
+
   const selectVoice = useCallback((name) => {
-    const v = voices.find(v => v.name === name);
-    voiceRef.current = v || voiceRef.current;
+    if (name.startsWith(RV_PREFIX)) {
+      voiceRef.current = null;
+    } else {
+      const v = sysVoices.find(v => v.name === name);
+      voiceRef.current = v || null;
+    }
     setSelectedVoiceName(name);
     localStorage.setItem(lang.voiceKey, name);
-  }, [voices, lang.voiceKey]);
+  }, [sysVoices, lang.voiceKey]);
 
   const speak = useCallback((text) => {
+    const saved = selectedVoiceName;
+    if (saved && saved.startsWith(RV_PREFIX)) {
+      const rvName = saved.slice(RV_PREFIX.length);
+      window.speechSynthesis.cancel();
+      rvSpeak(rvName, text);
+      return;
+    }
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     const { rate, pitch } = getVoiceParams(voiceRef.current);
     u.lang = lang.ttsLang; u.rate = rate; u.pitch = pitch; u.volume = 1;
     if (voiceRef.current) u.voice = voiceRef.current;
     window.speechSynthesis.speak(u);
-  }, [lang.ttsLang]);
+  }, [selectedVoiceName, lang.ttsLang]);
 
-  return { speak, voices, selectedVoiceName, selectVoice };
+  return { speak, sysVoices, rvReady, selectedVoiceName, selectVoice };
 }
 
 /* ═══════════════════════════════════════════════
@@ -385,9 +472,10 @@ export default function App() {
   const [newName, setNewName] = useState("");
   const [jsonInput, setJsonInput] = useState("");
   const { toast, show: showToast } = useToast();
-  const { speak, voices, selectedVoiceName, selectVoice } = useSpeech(activeLang);
+  const { speak, sysVoices, rvReady, selectedVoiceName, selectVoice } = useSpeech(activeLang);
   const { canInstall, install, installed, isIos, dismiss } = useInstallPrompt();
   const [showIosModal, setShowIosModal] = useState(false);
+  const [showLangMenu, setShowLangMenu] = useState(false);
 
   // Only show dicts for active language
   const dictNames = Object.keys(data.dictionaries).filter(k => k.startsWith(activeLang + ":"));
@@ -480,6 +568,14 @@ export default function App() {
     persist(nd); setDictName(first); setIdx(0);
     showToast(`🗑️ "${displayName(name)}" видалено`);
   };
+
+  // Close lang menu on outside click
+  useEffect(() => {
+    if (!showLangMenu) return;
+    const h = () => setShowLangMenu(false);
+    setTimeout(() => window.addEventListener("click", h), 0);
+    return () => window.removeEventListener("click", h);
+  }, [showLangMenu]);
 
   // keyboard
   useEffect(() => {
@@ -631,35 +727,75 @@ export default function App() {
       {/* VOICE SELECTOR */}
       <div style={{ background: C.white, borderRadius: 16, padding: "16px 18px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: C.ink, marginBottom: 4 }}>🎙️ Голос — {LANGUAGES[activeLang]?.label}</div>
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
-          {voices.length === 0 ? "Голоси завантажуються..." : `${voices.length} голос${voices.length === 1 ? "" : voices.length < 5 ? "и" : "ів"} доступно`}
-        </div>
-        {voices.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {voices.map(v => (
-              <div key={v.name} onClick={() => { selectVoice(v.name); speak("Ciao, come stai?"); }}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "10px 14px", borderRadius: 10, cursor: "pointer",
-                  border: `1.5px solid ${selectedVoiceName === v.name ? C.terra : C.border}`,
-                  background: selectedVoiceName === v.name ? "#fdf2ee" : C.paper,
-                  transition: "all 0.15s",
-                }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{v.name}</div>
-                  <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
-                    {v.lang} · {v.localService ? "локальний" : "✨ онлайн"}
+
+        {/* System voices */}
+        {sysVoices.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, marginTop: 4, textTransform: "uppercase", letterSpacing: "0.08em" }}>Системні голоси</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+              {sysVoices.map(v => (
+                <div key={v.name} onClick={() => { selectVoice(v.name); speak(LANGUAGES[activeLang]?.sample || v.name); }}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "10px 14px", borderRadius: 10, cursor: "pointer",
+                    border: `1.5px solid ${selectedVoiceName === v.name ? C.terra : C.border}`,
+                    background: selectedVoiceName === v.name ? "#fdf2ee" : C.paper,
+                    transition: "all 0.15s",
+                  }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{v.name}</div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                      {v.lang} · {v.localService ? "локальний" : "✨ онлайн"}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {selectedVoiceName === v.name && <span style={{ fontSize: 11, color: C.terra, fontWeight: 700 }}>✓</span>}
+                    <span style={{ fontSize: 18 }}>🔊</span>
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {selectedVoiceName === v.name && (
-                    <span style={{ fontSize: 11, color: C.terra, fontWeight: 700 }}>✓ обрано</span>
-                  )}
-                  <span style={{ fontSize: 18 }}>🔊</span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* ResponsiveVoice voices */}
+        {(rvReady || LANGUAGES[activeLang]?.rvVoices?.length > 0) && (
+          <>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              ResponsiveVoice {!rvReady && <span style={{ color: C.faint }}>(завантажується...)</span>}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(LANGUAGES[activeLang]?.rvVoices || []).map(rv => {
+                const key = RV_PREFIX + rv.name;
+                const isSelected = selectedVoiceName === key;
+                return (
+                  <div key={key} onClick={() => { if (!rvReady) return; selectVoice(key); speak(LANGUAGES[activeLang]?.sample || ""); }}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "10px 14px", borderRadius: 10,
+                      cursor: rvReady ? "pointer" : "not-allowed",
+                      border: `1.5px solid ${isSelected ? C.terra : C.border}`,
+                      background: isSelected ? "#fdf2ee" : rvReady ? C.paper : "#f8f8f8",
+                      opacity: rvReady ? 1 : 0.55,
+                      transition: "all 0.15s",
+                    }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{rv.label}</div>
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>ResponsiveVoice · ☁️ онлайн</div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {isSelected && <span style={{ fontSize: 11, color: C.terra, fontWeight: 700 }}>✓</span>}
+                      <span style={{ fontSize: 18 }}>🔊</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {sysVoices.length === 0 && !rvReady && (
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>Голоси завантажуються...</div>
         )}
       </div>
 
@@ -731,23 +867,46 @@ export default function App() {
             </p>
           </div>
 
-          {/* LANGUAGE BADGES — clickable switchers */}
-          <div style={{ display: "flex", gap: 6 }}>
-            {Object.values(LANGUAGES).map(lang => (
-              <div key={lang.code} onClick={() => switchLang(lang.code)} style={{
-                display: "flex", alignItems: "center", gap: 6,
-                background: activeLang === lang.code ? C.terra : C.white,
-                border: `1.5px solid ${activeLang === lang.code ? C.terra : C.border}`,
-                borderRadius: 10, padding: "6px 10px",
-                boxShadow: "0 2px 8px rgba(26,26,46,0.07)",
-                cursor: "pointer", transition: "all 0.15s",
+          {/* LANGUAGE DROPDOWN */}
+          <div style={{ position: "relative" }}>
+            <div onClick={() => setShowLangMenu(m => !m)} style={{
+              display: "flex", alignItems: "center", gap: 8,
+              background: C.white, border: `1.5px solid ${C.border}`,
+              borderRadius: 10, padding: "7px 12px",
+              boxShadow: "0 2px 8px rgba(26,26,46,0.07)",
+              cursor: "pointer", userSelect: "none",
+            }}>
+              {LANGUAGES[activeLang]?.flag}
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{LANGUAGES[activeLang]?.label}</span>
+              <span style={{ fontSize: 10, color: C.muted, marginLeft: 2 }}>{showLangMenu ? "▲" : "▼"}</span>
+            </div>
+
+            {showLangMenu && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 6px)", right: 0,
+                background: C.white, border: `1.5px solid ${C.border}`,
+                borderRadius: 12, overflow: "hidden",
+                boxShadow: "0 8px 24px rgba(26,26,46,0.14)",
+                zIndex: 50, minWidth: 160,
               }}>
-                {lang.flag}
-                <span style={{ fontSize: 12, fontWeight: 700, color: activeLang === lang.code ? C.white : C.ink, letterSpacing: "0.02em" }}>
-                  {lang.code.toUpperCase()}
-                </span>
+                {Object.values(LANGUAGES).map(lang => (
+                  <div key={lang.code} onClick={() => { switchLang(lang.code); setShowLangMenu(false); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      padding: "11px 14px", cursor: "pointer",
+                      background: activeLang === lang.code ? "#fdf2ee" : C.white,
+                      borderBottom: `1px solid ${C.soft}`,
+                      transition: "background 0.12s",
+                    }}>
+                    {lang.flag}
+                    <span style={{ fontSize: 14, fontWeight: activeLang === lang.code ? 700 : 500, color: activeLang === lang.code ? C.terra : C.ink }}>
+                      {lang.label}
+                    </span>
+                    {activeLang === lang.code && <span style={{ marginLeft: "auto", color: C.terra, fontSize: 14 }}>✓</span>}
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         </header>
 
