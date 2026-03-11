@@ -22,6 +22,9 @@ const C = {
   easy:  { bg: "#e3f2fd", border: "#aecff5", text: "#1565c0" },
 };
 
+// ─── Горизонтальний відступ від краю екрана — міняй тут ───
+const SIDE = 8; // px
+
 /* ═══════════════════════════════════════════════
    LANGUAGES CONFIG
 ═══════════════════════════════════════════════ */
@@ -611,7 +614,7 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* Editor header */}
       <div style={{
-        height: 64, flexShrink: 0, padding: "0 4px",
+        height: 64, flexShrink: 0, padding: `0 ${SIDE}px`,
         display: "flex", alignItems: "center", gap: 10,
         borderBottom: `1px solid ${C.soft}`,
         background: "rgba(250,248,243,0.95)", backdropFilter: "blur(8px)",
@@ -633,7 +636,7 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
 
       {/* Cards list */}
       <div className="tab-scroll" style={{ flex: 1 }}>
-        <div style={{ padding: "14px 0 48px" }}>
+        <div style={{ padding: `14px ${SIDE}px 48px` }}>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>
             {editCards.length} {editCards.length === 1 ? "картка" : "карток"} · редагуй будь-яке поле
           </div>
@@ -840,7 +843,7 @@ export default function App() {
 
   /* ── CARDS TAB ── */
   const CardsTab = (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "12px 0 12px", gap: 10, minHeight: 0, height: "100%" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: `12px ${SIDE}px 12px`, gap: 10, minHeight: 0, height: "100%" }}>
       <div style={{ display: "flex", justifyContent: "center", gap: 8, flexShrink: 0 }}>
         <Stat val={data.xp} lbl="XP" />
         <Stat val={data.level} lbl="Рівень" />
@@ -899,7 +902,7 @@ export default function App() {
 
   /* ── CREATE TAB ── */
   const CreateTab = (
-    <div style={{ padding: "20px 0 40px" }}>
+    <div style={{ padding: `20px ${SIDE}px 40px` }}>
       <h2 style={sectionTitle}>✏️ Створити словник</h2>
       <input style={inputStyle} placeholder="Назва словника (напр. Урок 3)" value={newName} onChange={e => setNewName(e.target.value)} />
       <div style={{ background: "#f5f3ee", borderRadius: 8, padding: "8px 12px", marginBottom: 8, fontFamily: "monospace", fontSize: 11, color: C.muted }}>
@@ -937,7 +940,7 @@ export default function App() {
 
   /* ── SETTINGS TAB ── */
   const SettingsTab = (
-    <div style={{ padding: "20px 0 40px" }}>
+    <div style={{ padding: `20px ${SIDE}px 40px` }}>
       <h2 style={sectionTitle}>⚙️ Налаштування</h2>
       <SettingRow label="Авто-озвучення" desc="Говорити слово при переході до нової картки">
         <Toggle value={autoSpeak} onChange={setAutoSpeak} />
@@ -1057,7 +1060,7 @@ export default function App() {
       <div style={outerDiv}>
         {/* HEADER */}
         <header style={{
-          padding: "0 6px", height: 64, flexShrink: 0,
+          padding: `0 ${SIDE}px`, height: 64, flexShrink: 0,
           borderBottom: `1px solid ${C.soft}`,
           background: "rgba(250,248,243,0.9)", backdropFilter: "blur(8px)",
           position: "sticky", top: 0, zIndex: 10,
