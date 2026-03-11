@@ -388,7 +388,7 @@ const labelStyle = {
 
 const wordStyle = {
   fontFamily: "'Playfair Display', Georgia, serif",
-  fontSize: "clamp(1.7rem, 6vw, 2.7rem)", fontWeight: 700,
+  fontSize: 38, fontWeight: 700,
   color: C.ink, textAlign: "center", lineHeight: 1.2,
 };
 
@@ -828,8 +828,8 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@400;500;600&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { height: 100%; -webkit-text-size-adjust: none; text-size-adjust: none; }
         body { background: ${C.paper}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%; }
-        html { height: 100%; }
         #root { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
         .tab-scroll-outer { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
         .tab-scroll { flex: 1; overflow-y: scroll; display: flex; flex-direction: column; scrollbar-width: none; -ms-overflow-style: none; }
@@ -845,7 +845,9 @@ export default function App() {
       }}>
         {/* HEADER — fixed height, no layout shift between tabs */}
         <header style={{
-          padding: "14px 8px 12px",
+          padding: "0 8px",
+          height: 64,
+          flexShrink: 0,
           borderBottom: `1px solid ${C.soft}`,
           background: "rgba(250,248,243,0.9)",
           backdropFilter: "blur(8px)",
@@ -858,12 +860,12 @@ export default function App() {
           <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
             <h1 style={{
               fontFamily: "'Playfair Display', serif",
-              fontSize: "1.6rem", fontWeight: 700, color: C.ink, lineHeight: 1,
+              fontSize: 24, fontWeight: 700, color: C.ink, lineHeight: 1,
               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
             }}>
               {LANGUAGES[activeLang]?.label} <em style={{ color: C.terra, fontStyle: "italic" }}>Flashcards</em>
             </h1>
-            <p style={{ fontSize: 10, color: C.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>
+            <p style={{ fontSize: 9, color: C.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>
               Spaced repetition
             </p>
           </div>
