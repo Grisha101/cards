@@ -22,10 +22,38 @@ const C = {
   easy:  { bg: "#e3f2fd", border: "#aecff5", text: "#1565c0" },
 };
 
+/* ═══════════════════════════════════════════════
+   LANGUAGES CONFIG
+═══════════════════════════════════════════════ */
+const LANGUAGES = {
+  it: {
+    code: "it", label: "Italiano", ttsLang: "it-IT",
+    voiceKey: "ifc_voice_it",
+    flag: (
+      <svg width="22" height="16" viewBox="0 0 22 16" style={{ borderRadius: 3, flexShrink: 0 }}>
+        <rect width="22" height="16" fill="#009246"/>
+        <rect x="7.33" width="7.34" height="16" fill="#fff"/>
+        <rect x="14.67" width="7.33" height="16" fill="#ce2b37"/>
+      </svg>
+    ),
+  },
+  pl: {
+    code: "pl", label: "Polski", ttsLang: "pl-PL",
+    voiceKey: "ifc_voice_pl",
+    flag: (
+      <svg width="22" height="16" viewBox="0 0 22 16" style={{ borderRadius: 3, flexShrink: 0 }}>
+        <rect width="22" height="16" fill="#fff"/>
+        <rect y="8" width="22" height="8" fill="#dc143c"/>
+      </svg>
+    ),
+  },
+};
+
 const DEFAULT_DATA = {
   xp: 0, level: 1,
+  activeLang: "it",
   dictionaries: {
-    "Базові слова": [
+    "it:Базові слова": [
       { word: "ciao",       translation: "привіт / бувай" },
       { word: "grazie",     translation: "дякую" },
       { word: "prego",      translation: "будь ласка / нема за що" },
@@ -39,6 +67,33 @@ const DEFAULT_DATA = {
       { word: "notte",      translation: "ніч" },
       { word: "sole",       translation: "сонце" },
     ],
+    "pl:Базові слова": [
+      { word: "cześć",        translation: "привіт" },
+      { word: "dziękuję",     translation: "дякую" },
+      { word: "proszę",       translation: "будь ласка / прошу" },
+      { word: "dom",          translation: "будинок" },
+      { word: "woda",         translation: "вода" },
+      { word: "miłość",       translation: "кохання" },
+      { word: "jeść",         translation: "їсти" },
+      { word: "piękny",       translation: "красивий" },
+      { word: "przyjaciel",   translation: "друг" },
+      { word: "dzień dobry",  translation: "добрий день" },
+      { word: "noc",          translation: "ніч" },
+      { word: "słońce",       translation: "сонце" },
+      { word: "tak",          translation: "так" },
+      { word: "nie",          translation: "ні" },
+      { word: "przepraszam",  translation: "вибачте" },
+      { word: "dobrze",       translation: "добре / гаразд" },
+      { word: "miasto",       translation: "місто" },
+      { word: "ulica",        translation: "вулиця" },
+      { word: "sklep",        translation: "магазин" },
+      { word: "chleb",        translation: "хліб" },
+      { word: "mleko",        translation: "молоко" },
+      { word: "kawa",         translation: "кава" },
+      { word: "herbata",      translation: "чай" },
+      { word: "samochód",     translation: "машина" },
+      { word: "pociąg",       translation: "потяг" },
+    ],
   },
   progress: {},
 };
@@ -46,7 +101,16 @@ const DEFAULT_DATA = {
 function loadData() {
   try {
     const raw = localStorage.getItem("ifc_v3");
-    return raw ? JSON.parse(raw) : DEFAULT_DATA;
+    if (!raw) return DEFAULT_DATA;
+    const saved = JSON.parse(raw);
+    // Always merge default dictionaries so new languages added in code appear
+    return {
+      ...saved,
+      dictionaries: {
+        ...DEFAULT_DATA.dictionaries,
+        ...saved.dictionaries,
+      },
+    };
   } catch { return DEFAULT_DATA; }
 }
 
@@ -118,47 +182,46 @@ function dedupeVoices(voices) {
   });
 }
 
-function useSpeech() {
+function useSpeech(langCode) {
+  const lang = LANGUAGES[langCode] || LANGUAGES.it;
   const [voices, setVoices] = useState([]);
   const [selectedVoiceName, setSelectedVoiceName] = useState(
-    () => localStorage.getItem("ifc_voice") || ""
+    () => localStorage.getItem(lang.voiceKey) || ""
   );
   const voiceRef = useRef(null);
 
   useEffect(() => {
     const load = () => {
       const all = window.speechSynthesis.getVoices();
-      const itAll = dedupeVoices(all.filter(v => v.lang.toLowerCase().startsWith("it")));
-      const finalVoices = itAll;
-      if (!finalVoices.length) return;
-      setVoices(finalVoices);
-      const saved = localStorage.getItem("ifc_voice");
-      const match = saved ? finalVoices.find(v => v.name === saved) : null;
+      const langVoices = dedupeVoices(all.filter(v => v.lang.toLowerCase().startsWith(lang.code)));
+      if (!langVoices.length) return;
+      setVoices(langVoices);
+      const saved = localStorage.getItem(lang.voiceKey);
+      const match = saved ? langVoices.find(v => v.name === saved) : null;
       voiceRef.current = match
-        || finalVoices.find(v => !v.localService)
-        || finalVoices.find(v => /alice|bianca|luca|federica/i.test(v.name))
-        || finalVoices[0];
+        || langVoices.find(v => !v.localService)
+        || langVoices[0];
       if (!saved) setSelectedVoiceName(voiceRef.current?.name || "");
     };
     window.speechSynthesis.onvoiceschanged = load;
     load(); setTimeout(load, 500); setTimeout(load, 1500);
-  }, []);
+  }, [langCode]);
 
   const selectVoice = useCallback((name) => {
     const v = voices.find(v => v.name === name);
     voiceRef.current = v || voiceRef.current;
     setSelectedVoiceName(name);
-    localStorage.setItem("ifc_voice", name);
-  }, [voices]);
+    localStorage.setItem(lang.voiceKey, name);
+  }, [voices, lang.voiceKey]);
 
   const speak = useCallback((text) => {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     const { rate, pitch } = getVoiceParams(voiceRef.current);
-    u.lang = "it-IT"; u.rate = rate; u.pitch = pitch; u.volume = 1;
+    u.lang = lang.ttsLang; u.rate = rate; u.pitch = pitch; u.volume = 1;
     if (voiceRef.current) u.voice = voiceRef.current;
     window.speechSynthesis.speak(u);
-  }, []);
+  }, [lang.ttsLang]);
 
   return { speak, voices, selectedVoiceName, selectVoice };
 }
@@ -208,9 +271,9 @@ function FlipCard({ front, back, cardKey }) {
   useEffect(() => setFlipped(false), [cardKey]);
 
   return (
-    <div onClick={() => setFlipped(f => !f)} style={{ perspective: 1200, cursor: "pointer", userSelect: "none" }}>
+    <div onClick={() => setFlipped(f => !f)} style={{ perspective: 1200, cursor: "pointer", userSelect: "none", height: "100%" }}>
       <div style={{
-        position: "relative", width: "100%", height: 200,
+        position: "relative", width: "100%", height: "100%",
         transformStyle: "preserve-3d",
         transition: "transform 0.55s cubic-bezier(.4,0,.2,1)",
         transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
@@ -310,19 +373,58 @@ const TABS = [
 ═══════════════════════════════════════════════ */
 export default function App() {
   const [data, setData] = useState(() => loadData());
-  const [dictName, setDictName] = useState(() => Object.keys(loadData().dictionaries)[0]);
+  const [activeLang, setActiveLang] = useState(() => loadData().activeLang || "it");
+  const [dictName, setDictName] = useState(() => {
+    const d = loadData();
+    const lang = d.activeLang || "it";
+    return Object.keys(d.dictionaries).find(k => k.startsWith(lang + ":")) || Object.keys(d.dictionaries)[0];
+  });
   const [idx, setIdx] = useState(0);
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [tab, setTab] = useState("cards");
   const [newName, setNewName] = useState("");
   const [jsonInput, setJsonInput] = useState("");
   const { toast, show: showToast } = useToast();
-  const { speak, voices, selectedVoiceName, selectVoice } = useSpeech();
+  const { speak, voices, selectedVoiceName, selectVoice } = useSpeech(activeLang);
   const { canInstall, install, installed, isIos, dismiss } = useInstallPrompt();
   const [showIosModal, setShowIosModal] = useState(false);
 
+  // Only show dicts for active language
+  const dictNames = Object.keys(data.dictionaries).filter(k => k.startsWith(activeLang + ":"));
+  const displayName = (k) => k.replace(/^[a-z]+:/, "");
+
   const words = data.dictionaries[dictName] || [];
   const word  = words[idx] || { word: "—", translation: "—" };
+
+  const switchLang = useCallback((code) => {
+    if (code === activeLang) return;
+    const nd = { ...data, activeLang: code };
+    saveData(nd);
+    setData(nd);
+    setActiveLang(code);
+    const firstDict = Object.keys(nd.dictionaries).find(k => k.startsWith(code + ":"));
+    if (firstDict) {
+      setDictName(firstDict);
+      setIdx(0);
+    }
+  }, [data, activeLang]);
+
+  // When language switches — ensure dictName belongs to new lang, auto-speak
+  useEffect(() => {
+    const belongs = dictName.startsWith(activeLang + ":");
+    if (!belongs) {
+      const first = Object.keys(data.dictionaries).find(k => k.startsWith(activeLang + ":"));
+      if (first) setDictName(first);
+      setIdx(0);
+    }
+  }, [activeLang]);
+
+  useEffect(() => {
+    if (autoSpeak && words.length) {
+      const t = setTimeout(() => speak(words[0]?.word || ""), 400);
+      return () => clearTimeout(t);
+    }
+  }, [dictName]);
 
   const persist = useCallback((d) => { setData(d); saveData(d); }, []);
 
@@ -358,24 +460,25 @@ export default function App() {
   const createDict = () => {
     const parsed = parseInput(jsonInput);
     if (!parsed?.length) { showToast("❌ Невірний формат", true); return; }
-    const name = newName.trim() || "Словник " + (Object.keys(data.dictionaries).length + 1);
-    persist({ ...data, dictionaries: { ...data.dictionaries, [name]: parsed } });
-    setDictName(name); setIdx(0);
+    const rawName = newName.trim() || "Словник " + (dictNames.length + 1);
+    const key = `${activeLang}:${rawName}`;
+    persist({ ...data, dictionaries: { ...data.dictionaries, [key]: parsed } });
+    setDictName(key); setIdx(0);
     setNewName(""); setJsonInput("");
     setTab("cards");
-    showToast(`✅ "${name}" створено — ${parsed.length} слів`);
+    showToast(`✅ "${rawName}" створено — ${parsed.length} слів`);
   };
 
   const deleteDict = (name) => {
-    if (name === Object.keys(DEFAULT_DATA.dictionaries)[0] && Object.keys(data.dictionaries).length === 1) {
+    if (dictNames.length === 1) {
       showToast("❌ Не можна видалити єдиний словник", true); return;
     }
-    if (!window.confirm(`Видалити словник "${name}"?`)) return;
+    if (!window.confirm(`Видалити словник "${displayName(name)}"?`)) return;
     const nd = { ...data, dictionaries: { ...data.dictionaries } };
     delete nd.dictionaries[name];
-    const first = Object.keys(nd.dictionaries)[0];
+    const first = Object.keys(nd.dictionaries).find(k => k.startsWith(activeLang + ":"));
     persist(nd); setDictName(first); setIdx(0);
-    showToast(`🗑️ "${name}" видалено`);
+    showToast(`🗑️ "${displayName(name)}" видалено`);
   };
 
   // keyboard
@@ -394,67 +497,81 @@ export default function App() {
     return () => window.removeEventListener("keydown", h);
   }, [word, goNext]);
 
-  const dictNames = Object.keys(data.dictionaries);
-
   /* ── CARDS TAB ──────────────────────────── */
   const CardsTab = (
-    <div style={{ padding: "20px 16px 40px" }}>
-      {/* Stats */}
-      <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+    <div style={{
+      flex: 1, display: "flex", flexDirection: "column",
+      padding: "12px 16px 12px", overflow: "hidden", gap: 10,
+    }}>
+
+      {/* Stats row */}
+      <div style={{ display: "flex", justifyContent: "center", gap: 8, flexShrink: 0 }}>
         <Stat val={data.xp}    lbl="XP" />
         <Stat val={data.level} lbl="Рівень" />
         <Stat val={known}      lbl="Вивчено" />
         <Stat val={learning}   lbl="Вчиться" />
       </div>
 
-      {/* Progress */}
-      <div style={{ height: 5, background: C.soft, borderRadius: 4, overflow: "hidden", marginBottom: 6, maxWidth: 440, margin: "0 auto 6px" }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg,${C.terra},${C.gold})`, borderRadius: 4, transition: "width 0.5s" }} />
+      {/* Progress bar */}
+      <div style={{ flexShrink: 0 }}>
+        <div style={{ height: 4, background: C.soft, borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg,${C.terra},${C.gold})`, borderRadius: 4, transition: "width 0.5s" }} />
+        </div>
+        <p style={{ textAlign: "right", fontSize: 10, color: C.muted, marginTop: 3 }}>{pct}% вивчено</p>
       </div>
-      <p style={{ textAlign: "right", fontSize: 11, color: C.muted, maxWidth: 440, margin: "0 auto 16px" }}>{pct}% вивчено</p>
 
       {/* Dict chips */}
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 6, marginBottom: 16, scrollbarWidth: "none" }}>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", flexShrink: 0, scrollbarWidth: "none" }}>
         {dictNames.map(n => (
           <button key={n} onClick={() => switchDict(n)} style={{
-            padding: "6px 14px", borderRadius: 20, border: `1.5px solid`,
+            padding: "5px 12px", borderRadius: 20, border: `1.5px solid`,
             borderColor: dictName === n ? C.terra : C.soft,
             background: dictName === n ? C.terra : C.white,
             color: dictName === n ? C.white : C.ink,
             fontWeight: 600, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap",
-            fontFamily: "'DM Sans', sans-serif",
-          }}>{n}</button>
+            fontFamily: "'DM Sans', sans-serif", flexShrink: 0,
+          }}>{displayName(n)}</button>
         ))}
       </div>
 
       {words.length > 0 ? (
         <>
-          <p style={{ textAlign: "center", fontSize: 12, color: C.muted, marginBottom: 10 }}>{idx + 1} / {words.length}</p>
-          <FlipCard front={word.word} back={word.translation} cardKey={`${dictName}-${idx}`} />
+          {/* Counter */}
+          <p style={{ textAlign: "center", fontSize: 11, color: C.muted, flexShrink: 0 }}>
+            {idx + 1} / {words.length}
+          </p>
 
-          {/* Nav */}
-          <div style={{ display: "flex", gap: 8, marginTop: 20, marginBottom: 12 }}>
+          {/* Card — takes all remaining space */}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <FlipCard front={word.word} back={word.translation} cardKey={`${dictName}-${idx}`} />
+          </div>
+
+          {/* Nav buttons */}
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
             <Btn onClick={goPrev} style={{ flex: 1 }}>← Назад</Btn>
             <Btn onClick={() => speak(word.word)} style={{ flex: "0 0 48px" }}>🔊</Btn>
             <Btn onClick={goNext} variant="primary" style={{ flex: 1 }}>Далі →</Btn>
           </div>
 
-          {/* Grade */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
+          {/* Grade buttons */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, flexShrink: 0 }}>
             {[
               ["Знову", 0, "again"], ["Важко", 1, "hard"],
               ["Добре", 2, "good"],  ["Легко", 3, "easy"],
             ].map(([l, s, v]) => (
-              <Btn key={l} onClick={() => grade(s)} variant={v} style={{ padding: "12px 4px", textAlign: "center", width: "100%" }}>{l}</Btn>
+              <Btn key={l} onClick={() => grade(s)} variant={v} style={{ padding: "11px 4px", textAlign: "center", width: "100%" }}>{l}</Btn>
             ))}
           </div>
 
-          <p style={{ textAlign: "center", fontSize: 11, color: C.faint, marginTop: 14 }}>
+          {/* Keyboard hint */}
+          <p style={{ textAlign: "center", fontSize: 10, color: C.faint, flexShrink: 0 }}>
             ← → переміщення · 1-4 оцінка · S озвучити
           </p>
         </>
       ) : (
-        <p style={{ textAlign: "center", color: C.muted, marginTop: 60, fontSize: 16 }}>Словник порожній</p>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <p style={{ color: C.muted, fontSize: 16 }}>Словник порожній</p>
+        </div>
       )}
     </div>
   );
@@ -492,7 +609,7 @@ export default function App() {
       {dictNames.map(n => (
         <div key={n} style={{ display: "flex", alignItems: "center", background: C.white, borderRadius: 14, padding: "14px 16px", marginBottom: 10, border: `1.5px solid ${C.soft}`, boxShadow: "0 2px 8px rgba(26,26,46,0.06)" }}>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, color: C.ink, fontSize: 15 }}>{n}</div>
+            <div style={{ fontWeight: 700, color: C.ink, fontSize: 15 }}>{displayName(n)}</div>
             <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{data.dictionaries[n].length} слів</div>
           </div>
           <button onClick={() => { switchDict(n); setTab("cards"); }} style={linkBtn}>Відкрити</button>
@@ -513,7 +630,7 @@ export default function App() {
 
       {/* VOICE SELECTOR */}
       <div style={{ background: C.white, borderRadius: 16, padding: "16px 18px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
-        <div style={{ fontWeight: 700, fontSize: 15, color: C.ink, marginBottom: 4 }}>🎙️ Голос озвучення</div>
+        <div style={{ fontWeight: 700, fontSize: 15, color: C.ink, marginBottom: 4 }}>🎙️ Голос — {LANGUAGES[activeLang]?.label}</div>
         <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
           {voices.length === 0 ? "Голоси завантажуються..." : `${voices.length} голос${voices.length === 1 ? "" : voices.length < 5 ? "и" : "ів"} доступно`}
         </div>
@@ -604,48 +721,44 @@ export default function App() {
         overflow: "hidden",
       }}>
         {/* HEADER */}
-        <header style={{ textAlign: "center", padding: "24px 20px 16px", borderBottom: `1px solid ${C.soft}`, background: "rgba(250,248,243,0.9)", backdropFilter: "blur(8px)", position: "sticky", top: 0, zIndex: 10 }}>
-          <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: "clamp(1.8rem,5vw,2.6rem)", fontWeight: 700, color: C.ink, lineHeight: 1 }}>
-            Italian <em style={{ color: C.terra, fontStyle: "italic" }}>Flashcards</em>
-          </h1>
-          <p style={{ fontSize: 11, color: C.muted, letterSpacing: "0.12em", textTransform: "uppercase", marginTop: 4 }}>
-            Spaced repetition · Ukrainian translations
-          </p>
+        <header style={{ padding: "14px 20px 12px", borderBottom: `1px solid ${C.soft}`, background: "rgba(250,248,243,0.9)", backdropFilter: "blur(8px)", position: "sticky", top: 0, zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ textAlign: "left" }}>
+            <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: "1.6rem", fontWeight: 700, color: C.ink, lineHeight: 1 }}>
+              {LANGUAGES[activeLang]?.label} <em style={{ color: C.terra, fontStyle: "italic" }}>Flashcards</em>
+            </h1>
+            <p style={{ fontSize: 10, color: C.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>
+              Spaced repetition
+            </p>
+          </div>
+
+          {/* LANGUAGE BADGES — clickable switchers */}
+          <div style={{ display: "flex", gap: 6 }}>
+            {Object.values(LANGUAGES).map(lang => (
+              <div key={lang.code} onClick={() => switchLang(lang.code)} style={{
+                display: "flex", alignItems: "center", gap: 6,
+                background: activeLang === lang.code ? C.terra : C.white,
+                border: `1.5px solid ${activeLang === lang.code ? C.terra : C.border}`,
+                borderRadius: 10, padding: "6px 10px",
+                boxShadow: "0 2px 8px rgba(26,26,46,0.07)",
+                cursor: "pointer", transition: "all 0.15s",
+              }}>
+                {lang.flag}
+                <span style={{ fontSize: 12, fontWeight: 700, color: activeLang === lang.code ? C.white : C.ink, letterSpacing: "0.02em" }}>
+                  {lang.code.toUpperCase()}
+                </span>
+              </div>
+            ))}
+          </div>
         </header>
 
-        {/* PWA INSTALL BANNER */}
-        {canInstall && (
-          <div style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            background: `linear-gradient(135deg, ${C.terra}, #a84730)`,
-            padding: "12px 16px", gap: 12,
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 22 }}>📲</span>
-              <div>
-                <div style={{ color: C.white, fontWeight: 700, fontSize: 13 }}>Додати на екран</div>
-                <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 11 }}>Працює без інтернету</div>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-              <button onClick={() => isIos ? setShowIosModal(true) : install()} style={{
-                background: C.white, color: C.terra, border: "none",
-                borderRadius: 8, padding: "7px 14px", fontWeight: 700,
-                fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
-              }}>{isIos ? "Як?" : "Встановити"}</button>
-              <button onClick={dismiss} style={{
-                background: "rgba(255,255,255,0.2)", color: C.white, border: "none",
-                borderRadius: 8, padding: "7px 10px", fontSize: 13, cursor: "pointer",
-              }}>✕</button>
-            </div>
-          </div>
-        )}
-
         {/* CONTENT */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          {tab === "cards"    ? CardsTab    : null}
-          {tab === "create"   ? CreateTab   : null}
-          {tab === "settings" ? SettingsTab : null}
+        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          {tab === "cards" ? CardsTab : (
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {tab === "create"   ? CreateTab   : null}
+              {tab === "settings" ? SettingsTab : null}
+            </div>
+          )}
         </div>
 
         {/* BOTTOM NAV */}
