@@ -157,7 +157,6 @@ function loadData() {
     const raw = localStorage.getItem("ifc_v3");
     if (!raw) return DEFAULT_DATA;
     const saved = JSON.parse(raw);
-    // Always merge default dictionaries so new languages added in code appear
     return {
       ...saved,
       dictionaries: {
@@ -214,19 +213,15 @@ function useToast() {
   return { toast, show };
 }
 
-// Some voices sound unnaturally low — these need pitch correction
 const LOW_PITCH_VOICES = /google|microsoft|samsung|android|ivona/i;
 
 function getVoiceParams(voice) {
-  // Online/cloud voices often have built-in naturalness, use neutral params
-  // Local TTS engines on Android tend to sound low — bump pitch up
   if (!voice) return { rate: 0.82, pitch: 1.0 };
   if (LOW_PITCH_VOICES.test(voice.name)) return { rate: 0.82, pitch: 1.35 };
   return { rate: 0.82, pitch: 1.0 };
 }
 
 function dedupeVoices(voices) {
-  // Deduplicate by name (some browsers list same voice multiple times with different langs)
   const seen = new Set();
   return voices.filter(v => {
     const key = v.name.trim().toLowerCase();
@@ -236,7 +231,6 @@ function dedupeVoices(voices) {
   });
 }
 
-// RV prefix used to distinguish ResponsiveVoice selections from system voices
 const RV_PREFIX = "rv:";
 
 function rvSpeak(rvName, text, sample) {
@@ -252,9 +246,8 @@ function useSpeech(langCode) {
   const [selectedVoiceName, setSelectedVoiceName] = useState(
     () => localStorage.getItem(lang.voiceKey) || ""
   );
-  const voiceRef = useRef(null); // system SpeechSynthesisVoice or null for RV
+  const voiceRef = useRef(null);
 
-  // Load system voices
   useEffect(() => {
     const load = () => {
       const all = window.speechSynthesis.getVoices();
@@ -262,7 +255,7 @@ function useSpeech(langCode) {
       setSysVoices(langVoices);
       const saved = localStorage.getItem(lang.voiceKey);
       if (saved && saved.startsWith(RV_PREFIX)) {
-        voiceRef.current = null; // RV mode
+        voiceRef.current = null;
         setSelectedVoiceName(saved);
       } else {
         const match = saved ? langVoices.find(v => v.name === saved) : null;
@@ -274,7 +267,6 @@ function useSpeech(langCode) {
     load(); setTimeout(load, 500); setTimeout(load, 1500);
   }, [langCode]);
 
-  // Detect ResponsiveVoice ready
   useEffect(() => {
     if (typeof window.responsiveVoice !== "undefined") { setRvReady(true); return; }
     const t = setInterval(() => {
@@ -477,7 +469,6 @@ export default function App() {
   const [showIosModal, setShowIosModal] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
 
-  // Only show dicts for active language
   const dictNames = Object.keys(data.dictionaries).filter(k => k.startsWith(activeLang + ":"));
   const displayName = (k) => k.replace(/^[a-z]+:/, "");
 
@@ -497,7 +488,6 @@ export default function App() {
     }
   }, [data, activeLang]);
 
-  // When language switches — ensure dictName belongs to new lang, auto-speak
   useEffect(() => {
     const belongs = dictName.startsWith(activeLang + ":");
     if (!belongs) {
@@ -516,7 +506,6 @@ export default function App() {
 
   const persist = useCallback((d) => { setData(d); saveData(d); }, []);
 
-  // stats
   let known = 0, learning = 0;
   words.forEach(w => {
     const p = data.progress[w.word];
@@ -569,7 +558,6 @@ export default function App() {
     showToast(`🗑️ "${displayName(name)}" видалено`);
   };
 
-  // Close lang menu on outside click
   useEffect(() => {
     if (!showLangMenu) return;
     const h = () => setShowLangMenu(false);
@@ -577,7 +565,6 @@ export default function App() {
     return () => window.removeEventListener("click", h);
   }, [showLangMenu]);
 
-  // keyboard
   useEffect(() => {
     const h = (e) => {
       if (["INPUT","TEXTAREA"].includes(e.target.tagName)) return;
@@ -637,7 +624,7 @@ export default function App() {
             {idx + 1} / {words.length}
           </p>
 
-          {/* Card — takes all remaining space */}
+          {/* Card */}
           <div style={{ flex: 1, minHeight: 0 }}>
             <FlipCard front={word.word} back={word.translation} cardKey={`${dictName}-${idx}`} />
           </div>
@@ -728,7 +715,6 @@ export default function App() {
       <div style={{ background: C.white, borderRadius: 16, padding: "16px 18px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: C.ink, marginBottom: 4 }}>🎙️ Голос — {LANGUAGES[activeLang]?.label}</div>
 
-        {/* System voices */}
         {sysVoices.length > 0 && (
           <>
             <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, marginTop: 4, textTransform: "uppercase", letterSpacing: "0.08em" }}>Системні голоси</div>
@@ -758,7 +744,6 @@ export default function App() {
           </>
         )}
 
-        {/* ResponsiveVoice voices */}
         {(rvReady || LANGUAGES[activeLang]?.rvVoices?.length > 0) && (
           <>
             <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>
@@ -799,7 +784,6 @@ export default function App() {
         )}
       </div>
 
-      {/* INSTALL ROW */}
       {!installed ? (
         <SettingRow
           label="📲 Додати на екран"
@@ -856,10 +840,24 @@ export default function App() {
         display: "flex", flexDirection: "column", maxWidth: 520, margin: "0 auto",
         overflow: "hidden",
       }}>
-        {/* HEADER */}
-        <header style={{ padding: "14px 20px 12px", borderBottom: `1px solid ${C.soft}`, background: "rgba(250,248,243,0.9)", backdropFilter: "blur(8px)", position: "sticky", top: 0, zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ textAlign: "left" }}>
-            <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: "1.6rem", fontWeight: 700, color: C.ink, lineHeight: 1 }}>
+        {/* HEADER — fixed height, no layout shift between tabs */}
+        <header style={{
+          padding: "14px 20px 12px",
+          borderBottom: `1px solid ${C.soft}`,
+          background: "rgba(250,248,243,0.9)",
+          backdropFilter: "blur(8px)",
+          position: "sticky", top: 0, zIndex: 10,
+          display: "flex", alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+        }}>
+          {/* Title — flex: 1 + minWidth: 0 prevents it from pushing the dropdown */}
+          <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+            <h1 style={{
+              fontFamily: "'Playfair Display', serif",
+              fontSize: "1.6rem", fontWeight: 700, color: C.ink, lineHeight: 1,
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>
               {LANGUAGES[activeLang]?.label} <em style={{ color: C.terra, fontStyle: "italic" }}>Flashcards</em>
             </h1>
             <p style={{ fontSize: 10, color: C.muted, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>
@@ -867,8 +865,8 @@ export default function App() {
             </p>
           </div>
 
-          {/* LANGUAGE DROPDOWN */}
-          <div style={{ position: "relative" }}>
+          {/* LANGUAGE DROPDOWN — flexShrink: 0 keeps it from being squeezed */}
+          <div style={{ position: "relative", flexShrink: 0 }}>
             <div onClick={() => setShowLangMenu(m => !m)} style={{
               display: "flex", alignItems: "center", gap: 8,
               background: C.white, border: `1.5px solid ${C.border}`,
@@ -920,12 +918,12 @@ export default function App() {
           )}
         </div>
 
-        {/* BOTTOM NAV */}
+        {/* BOTTOM NAV — slightly taller padding */}
         <nav style={{ display: "flex", borderTop: `1px solid ${C.soft}`, background: "rgba(250,248,243,0.95)", backdropFilter: "blur(8px)", position: "sticky", bottom: 0 }}>
           {TABS.map(({ id, icon, label }) => (
             <button key={id} onClick={() => setTab(id)} style={{
               flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
-              padding: "10px 4px 8px", background: "none", border: "none", cursor: "pointer",
+              padding: "14px 4px 12px", background: "none", border: "none", cursor: "pointer",
               gap: 2,
             }}>
               <span style={{ fontSize: 20 }}>{icon}</span>
