@@ -832,9 +832,8 @@ export default function App() {
         html { height: 100%; }
         #root { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
         .tab-scroll-outer { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-        .tab-scroll { flex: 1; overflow-y: scroll; margin-right: -20px; padding-right: 20px; display: flex; flex-direction: column; }
-        .tab-scroll::-webkit-scrollbar { display: none; }
-        .tab-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+        .tab-scroll { flex: 1; overflow-y: scroll; display: flex; flex-direction: column; scrollbar-width: none; -ms-overflow-style: none; }
+        .tab-scroll::-webkit-scrollbar { width: 0; height: 0; background: transparent; }
         button { font-family: 'DM Sans', sans-serif; }
       `}</style>
 
