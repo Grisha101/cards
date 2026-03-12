@@ -23,7 +23,7 @@ const C = {
 };
 
 // ─── Горизонтальний відступ від краю екрана — міняй тут ───
-const SIDE = 3; // px
+const SIDE = 8; // px
 
 /* ═══════════════════════════════════════════════
    LANGUAGES CONFIG
@@ -585,6 +585,8 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
   const [editCards, setEditCards] = useState(
     () => cards.map((c, i) => ({ ...c, _id: Date.now() + i }))
   );
+  const [bulkProgress, setBulkProgress] = useState(null);
+  // null = idle | { done, total, errors, finished? } = active
 
   const updateCard = useCallback((id, field, value) => {
     setEditCards(cs => cs.map(c => c._id === id ? { ...c, [field]: value } : c));
@@ -597,6 +599,32 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
   const addCard = () => {
     setEditCards(cs => [...cs, { word: "", translation: "", _id: Date.now() }]);
   };
+
+  // Bulk image search — finds first result for every card that has no image yet
+  const findAllImages = async () => {
+    const targets = editCards.filter(c => c.word.trim() && !c.image);
+    if (!targets.length) return;
+    setBulkProgress({ done: 0, total: targets.length, errors: 0 });
+    for (let i = 0; i < targets.length; i++) {
+      const card = targets[i];
+      try {
+        const imgs = await searchImages(card.word.trim());
+        if (imgs.length > 0) {
+          setEditCards(cs => cs.map(c =>
+            c._id === card._id ? { ...c, image: imgs[0], translation: "" } : c
+          ));
+        }
+      } catch {
+        setBulkProgress(p => ({ ...p, errors: (p?.errors || 0) + 1 }));
+      }
+      setBulkProgress(p => ({ ...p, done: i + 1 }));
+      await new Promise(r => setTimeout(r, 350)); // avoid rate-limiting
+    }
+    setBulkProgress(p => ({ ...p, finished: true }));
+  };
+
+  const cardsWithoutImage = editCards.filter(c => c.word.trim() && !c.image).length;
+  const isRunning = bulkProgress && !bulkProgress.finished;
 
   const handleSave = () => {
     const cleaned = editCards
@@ -637,6 +665,65 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
       {/* Cards list */}
       <div className="tab-scroll" style={{ flex: 1 }}>
         <div style={{ padding: `14px ${SIDE}px 48px` }}>
+          {/* ── Bulk image search banner ── */}
+          {cardsWithoutImage > 0 && (
+            <div style={{
+              background: "#fdf2ee", borderRadius: 14, padding: "12px 14px",
+              marginBottom: 14, border: `1.5px solid ${C.terra}22`,
+              display: "flex", flexDirection: "column", gap: 10,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: C.terra }}>
+                    🔍 Знайти зображення для всіх
+                  </div>
+                  <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                    {isRunning
+                      ? `Обробляю ${bulkProgress.done} / ${bulkProgress.total}…`
+                      : bulkProgress?.finished
+                        ? `Готово · знайдено для ${bulkProgress.total - (bulkProgress.errors||0)} з ${bulkProgress.total}`
+                        : `${cardsWithoutImage} карток без зображення`}
+                  </div>
+                </div>
+                {!isRunning && !bulkProgress?.finished && (
+                  <button onClick={findAllImages} style={{
+                    padding: "9px 16px", borderRadius: 10, flexShrink: 0,
+                    background: C.terra, color: C.white, border: "none",
+                    fontSize: 13, fontWeight: 700, cursor: "pointer",
+                    fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    Запустити
+                  </button>
+                )}
+                {bulkProgress?.finished && (
+                  <button onClick={() => setBulkProgress(null)} style={{
+                    padding: "9px 16px", borderRadius: 10, flexShrink: 0,
+                    background: C.white, color: C.terra,
+                    border: `1.5px solid ${C.terra}`, fontSize: 13,
+                    fontWeight: 700, cursor: "pointer",
+                    fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    Ще раз
+                  </button>
+                )}
+              </div>
+
+              {/* Progress bar */}
+              {bulkProgress && (
+                <div style={{ height: 4, background: "#f0e8e4", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", borderRadius: 4,
+                    width: `${Math.round((bulkProgress.done / bulkProgress.total) * 100)}%`,
+                    background: bulkProgress.finished
+                      ? (bulkProgress.errors > 0 ? C.gold : C.sage)
+                      : C.terra,
+                    transition: "width 0.3s",
+                  }} />
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>
             {editCards.length} {editCards.length === 1 ? "картка" : "карток"} · редагуй будь-яке поле
           </div>
@@ -664,6 +751,970 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
       </div>
     </div>
   );
+}
+
+/* ═══════════════════════════════════════════════
+   PRACTICE VIEW — keyboard input
+═══════════════════════════════════════════════ */
+function normalize(s = "") {
+  return s.trim().toLowerCase()
+    .replace(/[àáâã]/g,"a").replace(/[èéêë]/g,"e")
+    .replace(/[ìíîï]/g,"i").replace(/[òóôõ]/g,"o")
+    .replace(/[ùúûü]/g,"u").replace(/ç/g,"c")
+    .replace(/ł/g,"l").replace(/ń/g,"n").replace(/ś/g,"s")
+    .replace(/ź|ż/g,"z").replace(/ą/g,"a").replace(/ę/g,"e")
+    .replace(/ó/g,"o");
+}
+
+function PracticeView({ words, dictNames, dictName, displayName, switchDict, speak, activeLang }) {
+  // direction: "toUkr" = іноземна → укр | "toForeign" = укр → іноземна
+  const [direction, setDirection] = useState("toUkr");
+  const [qIdx, setQIdx]       = useState(0);
+  const [input, setInput]     = useState("");
+  const [status, setStatus]   = useState("idle"); // idle | correct | wrong | revealed
+  const [streak, setStreak]   = useState(0);
+  const [score, setScore]     = useState({ correct: 0, wrong: 0 });
+  const [done, setDone]       = useState(false);
+  const [order, setOrder]     = useState([]);
+  const inputRef              = useRef(null);
+
+  const reset = (newOrder) => {
+    setOrder(newOrder);
+    setQIdx(0); setInput(""); setStatus("idle");
+    setStreak(0); setScore({ correct: 0, wrong: 0 }); setDone(false);
+  };
+
+  useEffect(() => {
+    if (!words.length) return;
+    reset([...words].map((_, i) => i).sort(() => Math.random() - 0.5));
+  }, [dictName, words.length]);
+
+  // Reset quiz when direction changes
+  useEffect(() => {
+    if (!words.length) return;
+    reset([...words].map((_, i) => i).sort(() => Math.random() - 0.5));
+  }, [direction]);
+
+  useEffect(() => {
+    if (status === "idle") inputRef.current?.focus();
+  }, [qIdx, status]);
+
+  if (!words.length) return (
+    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <p style={{ color: C.muted }}>Словник порожній</p>
+    </div>
+  );
+
+  const realIdx  = order[qIdx] ?? 0;
+  const card     = words[realIdx] || words[0];
+  const toForeign = direction === "toForeign";
+
+  // What we SHOW as a prompt, what we EXPECT as answer
+  const prompt       = toForeign ? (card.translation || "—") : card.word;
+  const correctWords = toForeign
+    ? card.word.split("/").map(p => normalize(p))
+    : (card.translation || "").split("/").map(p => normalize(p));
+
+  const check = () => {
+    if (status !== "idle") return;
+    const correct = correctWords.some(p => p === normalize(input));
+    setStatus(correct ? "correct" : "wrong");
+    if (correct) {
+      setStreak(s => s + 1);
+      setScore(s => ({ ...s, correct: s.correct + 1 }));
+      speak(card.word);
+    } else {
+      setStreak(0);
+      setScore(s => ({ ...s, wrong: s.wrong + 1 }));
+    }
+  };
+
+  const next = () => {
+    if (qIdx + 1 >= order.length) { setDone(true); return; }
+    setQIdx(q => q + 1);
+    setInput(""); setStatus("idle");
+  };
+
+  const restart = () => {
+    reset([...words].map((_, i) => i).sort(() => Math.random() - 0.5));
+  };
+
+  const total = order.length;
+  const pct   = total ? Math.round(((qIdx + (status !== "idle" ? 1 : 0)) / total) * 100) : 0;
+
+  const statusColors = {
+    correct: { bg: C.good.bg,  border: C.good.border,  text: C.good.text  },
+    wrong:   { bg: C.again.bg, border: C.again.border, text: C.again.text },
+    revealed:{ bg: C.hard.bg,  border: C.hard.border,  text: C.hard.text  },
+    idle:    { bg: C.white,    border: C.border,        text: C.ink        },
+  };
+  const sc = statusColors[status];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: `12px ${SIDE}px 12px` }}>
+
+      {/* Dict chips */}
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", flexShrink: 0, scrollbarWidth: "none", marginBottom: 10 }}>
+        {dictNames.map(n => (
+          <button key={n} onClick={() => switchDict(n)} style={{
+            padding: "5px 12px", borderRadius: 20,
+            borderColor: dictName === n ? C.terra : C.soft,
+            border: "1.5px solid", flexShrink: 0,
+            background: dictName === n ? C.terra : C.white,
+            color: dictName === n ? C.white : C.ink,
+            fontWeight: 600, fontSize: 12, cursor: "pointer",
+            fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap",
+          }}>{displayName(n)}</button>
+        ))}
+      </div>
+
+      {/* Direction toggle */}
+      <div style={{ display: "flex", gap: 6, flexShrink: 0, marginBottom: 10 }}>
+        {[
+          ["toUkr",     `${LANGUAGES[activeLang]?.label} → 🇺🇦`],
+          ["toForeign", `🇺🇦 → ${LANGUAGES[activeLang]?.label}`],
+        ].map(([d, label]) => (
+          <button key={d} onClick={() => setDirection(d)} style={{
+            flex: 1, padding: "7px 4px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+            border: `1.5px solid ${direction === d ? C.terra : C.border}`,
+            background: direction === d ? C.terra : C.white,
+            color: direction === d ? C.white : C.muted,
+            cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+            transition: "all 0.15s",
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* Progress */}
+      <div style={{ flexShrink: 0, marginBottom: 6 }}>
+        <div style={{ height: 4, background: C.soft, borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg,${C.terra},${C.gold})`, borderRadius: 4, transition: "width 0.4s" }} />
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+          <span style={{ fontSize: 10, color: C.muted }}>{qIdx + 1} / {total}</span>
+          <span style={{ fontSize: 10, color: C.muted }}>
+            ✅ {score.correct} &nbsp; ❌ {score.wrong} &nbsp; 🔥 {streak}
+          </span>
+        </div>
+      </div>
+
+      {/* Done screen */}
+      {done ? (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 56 }}>{score.wrong === 0 ? "🏆" : score.correct > score.wrong ? "🎉" : "💪"}</div>
+          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 24, fontWeight: 700, color: C.ink }}>
+            {score.wrong === 0 ? "Ідеально!" : "Раунд завершено"}
+          </div>
+          <div style={{ fontSize: 14, color: C.muted }}>
+            Правильно: {score.correct} · Помилок: {score.wrong}
+          </div>
+          <Btn variant="terra" onClick={restart} style={{ marginTop: 8 }}>Почати знову →</Btn>
+        </div>
+      ) : (
+        <>
+          {/* Word card */}
+          <div style={{
+            flex: 1, minHeight: 0, borderRadius: 22,
+            border: `2px solid ${sc.border}`,
+            background: sc.bg,
+            boxShadow: "0 8px 40px rgba(26,26,46,0.11)",
+            display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center",
+            gap: 10, padding: "20px 24px",
+            transition: "background 0.25s, border-color 0.25s",
+          }}>
+            <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", color: C.faint }}>
+              {toForeign ? "🇺🇦 Українська" : LANGUAGES[activeLang]?.label}
+            </span>
+
+            {/* Show image only in toUkr mode (image is the foreign-side hint) */}
+            {!toForeign && card.image ? (
+              <div style={{ flex: 1, width: "100%", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <img src={card.image} alt={card.word}
+                  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 12 }} />
+              </div>
+            ) : null}
+
+            <span style={{
+              fontFamily: "'Playfair Display', Georgia, serif",
+              fontSize: toForeign ? 28 : (card.image ? 26 : 38),
+              fontWeight: 700, color: C.ink, textAlign: "center", lineHeight: 1.25,
+            }}>{prompt}</span>
+
+            <span style={{ fontSize: 10, color: C.faint }}>
+              {toForeign ? `введи ${LANGUAGES[activeLang]?.label?.toLowerCase()}` : "введи переклад українською"}
+            </span>
+
+            {/* Feedback */}
+            {status === "correct" && (
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.good.text }}>✓ Правильно!</div>
+            )}
+            {(status === "wrong" || status === "revealed") && (
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 13, color: C.again.text, fontWeight: 700 }}>
+                  {status === "wrong" ? "✗ Неправильно" : "👁 Відповідь"}
+                </div>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 22, color: C.ink, marginTop: 4 }}>
+                  {toForeign ? card.word : (card.translation || "—")}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Input row */}
+          <div style={{ flexShrink: 0, display: "flex", gap: 8, marginTop: 10 }}>
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") { status === "idle" ? check() : next(); }
+              }}
+              disabled={status !== "idle"}
+              placeholder={toForeign ? `${LANGUAGES[activeLang]?.label}…` : "Переклад українською…"}
+              style={{
+                ...inputStyle, flex: 1, marginBottom: 0,
+                fontSize: 16, padding: "13px 14px",
+                background: status === "idle" ? "#faf9f6" : sc.bg,
+                borderColor: sc.border, color: sc.text,
+                transition: "all 0.2s",
+              }}
+            />
+            <button onClick={() => speak(card.word)} style={{
+              flexShrink: 0, width: 48, borderRadius: 10,
+              border: `1.5px solid ${C.border}`, background: C.white,
+              fontSize: 20, cursor: "pointer",
+            }}>🔊</button>
+          </div>
+
+          {/* Action buttons */}
+          <div style={{ flexShrink: 0, display: "flex", gap: 8, marginTop: 8 }}>
+            {status === "idle" ? (
+              <>
+                <button onClick={() => { setStatus("revealed"); setStreak(0); setScore(s => ({...s, wrong: s.wrong+1})); }}
+                  style={{ ...ghostSmallBtn, flex: 1 }}>
+                  👁 Показати
+                </button>
+                <Btn variant="primary" onClick={check} style={{ flex: 2 }}>
+                  Перевірити ↵
+                </Btn>
+              </>
+            ) : (
+              <Btn variant="terra" onClick={next} style={{ flex: 1 }}>
+                {qIdx + 1 >= total ? "Завершити 🏁" : "Далі →"}
+              </Btn>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const ghostSmallBtn = {
+  background: C.white, border: `1.5px solid ${C.border}`, color: C.muted,
+  borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer",
+  padding: "10px 8px", fontFamily: "'DM Sans', sans-serif",
+};
+
+/* ═══════════════════════════════════════════════
+   GRAMMAR DATA
+═══════════════════════════════════════════════ */
+const GRAMMAR = {
+  it: [
+    {
+      id: "it_articles", title: "Артиклі (Articoli)", icon: "🔤",
+      theory: `В італійській є означений та неозначений артикль.\n\nОзначений: il (чол. одн.) · la (жін. одн.) · i (чол. мн.) · le (жін. мн.)\nПеред голосною та st-/sp-/z-/gn-: lo → gli (чол.), l' (обидва роди)\nНеозначений: un (чол.) · una (жін.) · un' (перед голосною, жін.)\n\nПриклади:\n• il libro — книга  |  i libri — книги\n• la casa — дім  |  le case — доми\n• l'uomo — чоловік  |  lo studente — студент`,
+      exercises: [
+        { q: "___ libro è rosso.", ans: ["il"], hint: "libro — чол. рід, однина" },
+        { q: "___ casa è grande.", ans: ["la"], hint: "casa — жін. рід" },
+        { q: "___ studente studia.", ans: ["lo"], hint: "перед st- → lo" },
+        { q: "___ amica è gentile.", ans: ["l'"], hint: "перед голосною → l'" },
+        { q: "___ libri sono nuovi.", ans: ["i"], hint: "libri — чол. мн." },
+        { q: "___ ragazze cantano.", ans: ["le"], hint: "ragazze — жін. мн." },
+        { q: "Voglio ___ pizza.", ans: ["una"], hint: "неозначений, жін. рід" },
+        { q: "Ho ___ cane.", ans: ["un"], hint: "неозначений, чол. рід" },
+      ],
+    },
+    {
+      id: "it_essere", title: "Дієслово essere (бути)", icon: "💫",
+      theory: `ESSERE — бути (presente):\nio sono — я є\ntu sei — ти є\nlui/lei è — він/вона є\nnoi siamo — ми є\nvoi siete — ви є\nloro sono — вони є\n\nВикористовується для опису якостей, походження, стану.\n• Sono italiano. — Я італієць.\n• Lei è stanca. — Вона втомлена.`,
+      exercises: [
+        { q: "Io ___ stanco.", ans: ["sono"], hint: "io → sono" },
+        { q: "Tu ___ molto bravo.", ans: ["sei"], hint: "tu → sei" },
+        { q: "Lei ___ italiana.", ans: ["è"], hint: "lei → è" },
+        { q: "Noi ___ amici.", ans: ["siamo"], hint: "noi → siamo" },
+        { q: "Voi ___ pronti?", ans: ["siete"], hint: "voi → siete" },
+        { q: "Loro ___ studenti.", ans: ["sono"], hint: "loro → sono" },
+      ],
+    },
+    {
+      id: "it_avere", title: "Дієслово avere (мати)", icon: "🤲",
+      theory: `AVERE — мати (presente):\nio ho · tu hai · lui/lei ha\nnoi abbiamo · voi avete · loro hanno\n\n• Ho fame. — Я голодний.\n• Hai ragione. — Ти правий.\n• Ha vent'anni. — Йому 20 років.`,
+      exercises: [
+        { q: "Io ___ un gatto.", ans: ["ho"], hint: "io → ho" },
+        { q: "Tu ___ fame?", ans: ["hai"], hint: "tu → hai" },
+        { q: "Lei ___ una macchina.", ans: ["ha"], hint: "lei → ha" },
+        { q: "Noi ___ fretta.", ans: ["abbiamo"], hint: "noi → abbiamo" },
+        { q: "Voi ___ ragione.", ans: ["avete"], hint: "voi → avete" },
+        { q: "Loro ___ molti amici.", ans: ["hanno"], hint: "loro → hanno" },
+      ],
+    },
+    {
+      id: "it_present", title: "Presente: дієслова на -are", icon: "⏱️",
+      theory: `Дієслова на -ARE, напр. parlare (говорити):\nio parlo · tu parli · lui/lei parla\nnoi parliamo · voi parlate · loro parlano\n\nТак само: lavorare, mangiare, abitare, studiare.\n\n• Dove abiti? — Де ти живеш?\n• Mangiamo insieme! — Їмо разом!`,
+      exercises: [
+        { q: "Io ___ italiano. (parlare)", ans: ["parlo"], hint: "io: -o" },
+        { q: "Tu ___ a Roma? (abitare)", ans: ["abiti"], hint: "tu: -i" },
+        { q: "Lei ___ la pizza. (mangiare)", ans: ["mangia"], hint: "lui/lei: -a" },
+        { q: "Noi ___ insieme. (lavorare)", ans: ["lavoriamo"], hint: "noi: -iamo" },
+        { q: "Voi ___ molto. (studiare)", ans: ["studiate"], hint: "voi: -ate" },
+        { q: "Loro ___ inglese. (parlare)", ans: ["parlano"], hint: "loro: -ano" },
+      ],
+    },
+    {
+      id: "it_plural", title: "Множина іменників", icon: "📦",
+      theory: `• -o → -i: libro → libri, ragazzo → ragazzi\n• -a → -e: casa → case, ragazza → ragazze\n• -e → -i: studente → studenti, madre → madri\n• незмінні: città, caffè (наголошена голосна)\n\nВинятки: uomo → uomini`,
+      exercises: [
+        { q: "libro →", ans: ["libri"], hint: "-o → -i" },
+        { q: "casa →", ans: ["case"], hint: "-a → -e" },
+        { q: "studente →", ans: ["studenti"], hint: "-e → -i" },
+        { q: "ragazza →", ans: ["ragazze"], hint: "-a → -e" },
+        { q: "uomo →", ans: ["uomini"], hint: "неправильна форма" },
+        { q: "città →", ans: ["città"], hint: "незмінне — наголошена -à" },
+      ],
+    },
+    {
+      id: "it_ire_ere", title: "Presente: -ere та -ire дієслова", icon: "🔄",
+      theory: `Дієслова на -ERE, напр. scrivere (писати):\nio scrivo · tu scrivi · lui/lei scrive\nnoi scriviamo · voi scrivete · loro scrivono\n\nТак само: leggere (читати), vedere (бачити), prendere (брати), mettere (класти), chiudere (закривати).\n\nДієслова на -IRE: два типи\nТип A — dormire (спати):\nio dormo · tu dormi · lui/lei dorme\nnoi dormiamo · voi dormite · loro dormono\n\nТип B — з -isc- (capire — розуміти):\nio capisco · tu capisci · lui/lei capisce\nnoi capiamo · voi capite · loro capiscono\n\nТип B: capire, finire, preferire, pulire, costruire.`,
+      exercises: [
+        { q: "Io ___ un libro. (leggere)", ans: ["leggo"], hint: "io: -o" },
+        { q: "Tu ___ bene. (scrivere)", ans: ["scrivi"], hint: "tu: -i" },
+        { q: "Lei ___ la televisione. (vedere)", ans: ["vede"], hint: "lui/lei: -e" },
+        { q: "Noi ___ il caffè. (prendere)", ans: ["prendiamo"], hint: "noi: -iamo" },
+        { q: "Voi ___ la porta. (chiudere)", ans: ["chiudete"], hint: "voi: -ete" },
+        { q: "Loro ___ il film. (vedere)", ans: ["vedono"], hint: "loro: -ono" },
+        { q: "Io non ___ l'italiano. (capire)", ans: ["capisco"], hint: "capire → -isc- (tipo B)" },
+        { q: "Tu ___ l'esercizio? (finire)", ans: ["finisci"], hint: "finire → -isci (tipo B)" },
+        { q: "Lui ___ il tè. (preferire)", ans: ["preferisce"], hint: "preferire → -isce (tipo B)" },
+        { q: "Noi ___ tardi. (dormire)", ans: ["dormiamo"], hint: "dormire → tipo A: -iamo" },
+      ],
+    },
+    {
+      id: "it_passato_prossimo", title: "Passato prossimo (минулий час)", icon: "🕰️",
+      theory: `Passato prossimo = avere/essere + participio passato\n\nParticipo passato:\n• -are → -ato: parlare → parlato\n• -ere → -uto: vendere → venduto\n• -ire → -ito: dormire → dormito\n\nНеправильні:\nfare→fatto · dire→detto · vedere→visto\nscrivere→scritto · aprire→aperto · leggere→letto\nvenire→venuto · essere→stato · nascere→nato\n\nЗ AVERE: дієслова дії (mangiare, vedere, fare…)\nHo mangiato. · Hai visto il film?\n\nЗ ESSERE: рух, зміна стану (andare, venire, nascere, morire, stare, essere…)\nParticip. узгоджується з підметом!\nSono andato/a. · Siamo andati/e.\nÈ arrivata. (жін.)`,
+      exercises: [
+        { q: "Ieri io ___ la pizza. (mangiare)", ans: ["ho mangiato"], hint: "mangiare + avere → ho mangiato" },
+        { q: "Tu ___ il film? (vedere)", ans: ["hai visto"], hint: "vedere → visto (нерег.)" },
+        { q: "Lei ___ a Roma. (andare)", ans: ["è andata"], hint: "andare + essere, жін. → -a" },
+        { q: "Noi ___ tardi. (arrivare)", ans: ["siamo arrivati"], hint: "arrivare + essere, чол. мн." },
+        { q: "Loro ___ una lettera. (scrivere)", ans: ["hanno scritto"], hint: "scrivere → scritto (нерег.)" },
+        { q: "Marco ___ alle 8. (uscire)", ans: ["è uscito"], hint: "uscire + essere, чол." },
+        { q: "Io ___ a Milano. (nascere)", ans: ["sono nato", "sono nata"], hint: "nascere + essere" },
+        { q: "Voi ___ bene? (stare)", ans: ["siete stati", "siete state"], hint: "stare + essere" },
+      ],
+    },
+    {
+      id: "it_imperfetto", title: "Imperfetto (незакінчена минула дія)", icon: "🌀",
+      theory: `Imperfetto — тривала або повторювана дія в минулому.\n\nParl-ARE → parlavo:\nio parlavo · tu parlavi · lui/lei parlava\nnoi parlavamo · voi parlavate · loro parlavano\n\nVed-ERE → vedevo (аналогічно)\nDorm-IRE → dormivo (аналогічно)\n\nНеправильні:\nessere: ero, eri, era, eravamo, eravate, erano\nfare: facevo, facevi, faceva…\ndire: dicevo, dicevi, diceva…\n\nКоли: Da bambino mangiavo la pizza ogni giorno.\n(Дитиною я щодня їв піцу.)\nMentre leggevo, lui dormiva.\n(Поки я читав, він спав.)`,
+      exercises: [
+        { q: "Da bambino io ___ molto. (giocare)", ans: ["giocavo"], hint: "-are → -avo" },
+        { q: "Tu ___ sempre tardi. (arrivare)", ans: ["arrivavi"], hint: "-are → -avi" },
+        { q: "Lei ___ spesso. (sorridere)", ans: ["sorrideva"], hint: "-ere → -eva" },
+        { q: "Noi ___ in centro. (abitare)", ans: ["abitavamo"], hint: "-are → -avamo" },
+        { q: "Voi ___ ogni sera. (uscire)", ans: ["uscivate", "uscivate"], hint: "-ire → -ivate" },
+        { q: "Loro ___ italiano. (parlare)", ans: ["parlavano"], hint: "-are → -avano" },
+        { q: "Io ___ studente. (essere)", ans: ["ero"], hint: "essere → ero (нерег.)" },
+        { q: "Lui ___ il medico. (fare)", ans: ["faceva"], hint: "fare → faceva (нерег.)" },
+      ],
+    },
+    {
+      id: "it_futuro", title: "Futuro semplice (майбутній час)", icon: "🚀",
+      theory: `Futuro semplice — майбутній час.\n\nParlare → parler-:\nparlerò · parlerai · parlerà\nparleremo · parlerete · parleranno\n\nVendere → vender-:\nvenderò · venderai · venderà…\n\nDormire → dormir-:\ndormirò · dormirai · dormirà…\n\nНеправильні (скорочені основи):\nessere → sarò · avere → avrò · fare → farò\nandare → andrò · venire → verrò\npotere → potrò · dovere → dovrò\nvolere → vorrò · sapere → saprò\n\nВикористовується також для припущень:\nChe ore sono? — Saranno le tre.\n(Мабуть, третя година.)`,
+      exercises: [
+        { q: "Domani io ___ a Roma. (andare)", ans: ["andrò"], hint: "andare → andr- (нерег.)" },
+        { q: "Tu ___ con noi? (venire)", ans: ["verrai"], hint: "venire → verr- (нерег.)" },
+        { q: "Lei ___ alle 8. (arrivare)", ans: ["arriverà"], hint: "-are → -erà" },
+        { q: "Noi ___ la cena. (preparare)", ans: ["prepareremo"], hint: "-are → -eremo" },
+        { q: "Voi ___ in Italia? (restare)", ans: ["resterete"], hint: "-are → -erete" },
+        { q: "Loro ___ il film. (vedere)", ans: ["vedranno"], hint: "-ere → -ranno" },
+        { q: "Io ___ medico. (essere)", ans: ["sarò"], hint: "essere → sarò (нерег.)" },
+        { q: "Lui ___ tempo. (avere)", ans: ["avrà"], hint: "avere → avr- (нерег.)" },
+      ],
+    },
+    {
+      id: "it_condizionale", title: "Condizionale presente (умовний спосіб)", icon: "💭",
+      theory: `Condizionale presente — «я б…», ввічливі прохання, умови.\n\nОснова = та сама, що у futuro + закінчення:\n-ei · -esti · -ebbe · -emmo · -este · -ebbero\n\nparlare → parlerei, parleresti, parlerebbe…\nessere → sarei, saresti, sarebbe…\navere → avrei, avresti, avrebbe…\nandare → andrei · venire → verrei\nfare → farei · potere → potrei\nvolere → vorrei · dovere → dovrei\n\nПриклади:\nVorrei un caffè. — Я б хотів каву.\nPotresti aiutarmi? — Міг би допомогти?\nDovresti studiare. — Тобі варто вчитися.`,
+      exercises: [
+        { q: "Io ___ un caffè. (volere)", ans: ["vorrei"], hint: "volere → vorrei (нерег.)" },
+        { q: "Tu ___ venire? (potere)", ans: ["potresti"], hint: "potere → potr- + -esti" },
+        { q: "Lei ___ a casa. (restare)", ans: ["resterebbe"], hint: "-are → -erebbe" },
+        { q: "Noi ___ insieme. (parlare)", ans: ["parleremmo"], hint: "-are → -eremmo" },
+        { q: "Voi ___ studiare. (dovere)", ans: ["dovreste"], hint: "dovere → dovr- + -este" },
+        { q: "Loro ___ contenti. (essere)", ans: ["sarebbero"], hint: "essere → sar- + -ebbero" },
+        { q: "Io ___ farlo. (fare)", ans: ["farei"], hint: "fare → farei (нерег.)" },
+      ],
+    },
+    {
+      id: "it_congiuntivo", title: "Congiuntivo presente (кон'юнктив)", icon: "🎭",
+      theory: `Congiuntivo presente — після виразів сумніву, бажання, емоцій.\n\nParl-ARE → parli:\n(che) io parli · tu parli · lui/lei parli\nnoi parliamo · voi parliate · loro parlino\n\nVed-ERE → veda:\nвед- + -a · -a · -a · -iamo · -iate · -ano\n\nDorm-IRE → dorma (або capire → capisca)\n\nНеправильні:\nessere: sia, sia, sia, siamo, siate, siano\navere: abbia · fare: faccia · andare: vada\nvenire: venga · potere: possa · sapere: sappia\n\nПісля: pensare che, credere che, sperare che,\nvolere che, è necessario che, sebbene, affinché…\n• Penso che lui sia stanco. (Думаю, він втомлений)\n• Voglio che tu venga. (Хочу, щоб ти прийшов)`,
+      exercises: [
+        { q: "Penso che lui ___ stanco. (essere)", ans: ["sia"], hint: "essere → sia" },
+        { q: "Voglio che tu ___ qui. (venire)", ans: ["venga"], hint: "venire → venga" },
+        { q: "Credo che lei ___ ragione. (avere)", ans: ["abbia"], hint: "avere → abbia" },
+        { q: "Spero che voi ___ bene. (stare)", ans: ["stiate"], hint: "stare → stiate" },
+        { q: "È meglio che tu ___. (partire)", ans: ["parta"], hint: "-ire → -a" },
+        { q: "Sebbene loro ___ ricchi…", ans: ["siano"], hint: "essere → siano (мн.)" },
+        { q: "Voglio che tu ___ la verità. (dire)", ans: ["dica"], hint: "dire → dica" },
+      ],
+    },
+    {
+      id: "it_pronouns", title: "Займенники (Pronomi)", icon: "👤",
+      theory: `Особові займенники:\nio · tu · lui/lei · noi · voi · loro\n\nПрямий додаток (Complemento oggetto diretto):\nmi (мене) · ti (тебе) · lo/la (його/її)\nci (нас) · vi (вас) · li/le (їх)\n\nНепрямий (Complemento oggetto indiretto):\nmi (мені) · ti (тобі) · gli/le (йому/їй)\nci (нам) · vi (вам) · gli (їм)\n\nРефлексивні: mi · ti · si · ci · vi · si\n\nПозиція: перед дієсловом (або після інфінітива злито)\n• Lo vedo. — Я його бачу.\n• Gli parlo. — Я з ним говорю.\n• Mi chiamo Marco. — Мене звати Марко.\n• Voglio vederlo. — Хочу його побачити.`,
+      exercises: [
+        { q: "Non ___ vedo. (його)", ans: ["lo"], hint: "masc. diretto → lo" },
+        { q: "___ chiamo Marco. (рефл.)", ans: ["Mi"], hint: "рефлексивний → mi" },
+        { q: "___ parlo ogni giorno. (їй)", ans: ["Le"], hint: "indir. жін. → le" },
+        { q: "Voglio veder___. (їх, жін.)", ans: ["le"], hint: "після інф.: vederle" },
+        { q: "___ vediamo domani! (нас → нас)", ans: ["Ci"], hint: "ci = нас/нам" },
+        { q: "Non ___ capisco. (тебе)", ans: ["ti"], hint: "diretto 2 ос. → ti" },
+        { q: "Hai parlato? — Sì, ___ ho parlato. (з ним)", ans: ["gli"], hint: "indir. чол. → gli" },
+      ],
+    },
+    {
+      id: "it_prepositions", title: "Прийменники (Preposizioni)", icon: "🔗",
+      theory: `Основні прийменники та їх злиття з артиклем:\n\ndi + il → del · di + la → della · di + i → dei\nda + il → dal · da + la → dalla\na + il → al · a + la → alla · a + i → ai\nin + il → nel · in + la → nella\nsu + il → sul · su + la → sulla\n\nВживання:\n• di — приналежність, матеріал, походження\n  il libro di Marco · una tazza di caffè\n• a — місце (місто!), напрямок, час\n  Vado a Roma. · Sono a casa.\n• da — від кого, з якого часу, мета\n  Vengo da Milano. · Studio da tre anni.\n• in — в (країна, кімната, транспорт)\n  in Italia · in cucina · in treno\n• su — на (поверхня), про\n  sul tavolo · un libro su Roma\n• per — для, щоб, через, тривалість\n  per te · parto per Roma`,
+      exercises: [
+        { q: "Vado ___ Roma.", ans: ["a"], hint: "місто → a" },
+        { q: "Vengo ___ Milano.", ans: ["da"], hint: "звідки → da" },
+        { q: "Abito ___ Italia.", ans: ["in"], hint: "країна → in" },
+        { q: "Il libro è ___ tavolo.", ans: ["sul"], hint: "su + il → sul" },
+        { q: "Studio ___ tre anni.", ans: ["da"], hint: "з якого часу → da" },
+        { q: "Una tazza ___ caffè.", ans: ["di"], hint: "матеріал/вміст → di" },
+        { q: "Parto ___ le vacanze.", ans: ["per"], hint: "мета → per" },
+        { q: "Sono ___ casa.", ans: ["a"], hint: "a casa — вдома" },
+      ],
+    },
+    {
+      id: "it_adjectives", title: "Прикметники (Aggettivi)", icon: "🎨",
+      theory: `Прикметники узгоджуються з іменником у роді та числі.\n\nТип 1: 4 форми (-o/-a/-i/-e)\nbello (гарний): bello · bella · belli · belle\nnuovo · nuova · nuovi · nuove\n\nТип 2: 2 форми (-e/-i)\ngrande (великий/а): grande · grande · grandi · grandi\ninteressante · interessanti\n\nПозиція: зазвичай ПІСЛЯ іменника\n• una macchina rossa — червона машина\n• un libro interessante — цікава книга\n\nАЛЕ кілька коротких прикметників — ПЕРЕД:\nbello, brutto, buono, cattivo, grande, piccolo, giovane, vecchio, nuovo\n• una bella ragazza · un buon vino\n\nBUONO перед noun (як артикль): buon amico, buona amica`,
+      exercises: [
+        { q: "una ragazza ___. (bello, жін.)", ans: ["bella"], hint: "жін. → -a" },
+        { q: "due ragazzi ___. (alto, чол.мн.)", ans: ["alti"], hint: "чол.мн. → -i" },
+        { q: "le case ___. (grande, мн.)", ans: ["grandi"], hint: "тип 2: -i у мн." },
+        { q: "un ___ libro. (buono, скорочено)", ans: ["buon"], hint: "buono → buon перед чол." },
+        { q: "Ho una macchina ___. (rosso)", ans: ["rossa"], hint: "жін. → -a" },
+        { q: "Sono ragazze ___. (simpatico)", ans: ["simpatiche"], hint: "жін.мн. -co → -che" },
+        { q: "un film ___. (interessante)", ans: ["interessante"], hint: "тип 2: форма одна" },
+        { q: "Ho comprato una ___ borsa. (nuovo)", ans: ["nuova"], hint: "жін. → -a" },
+      ],
+    },
+    {
+      id: "it_comparativo", title: "Порівняння (Comparativo & Superlativo)", icon: "📊",
+      theory: `COMPARATIVO:\npiù + adj + di/che — більш…, ніж\nmeno + adj + di/che — менш…, ніж\ncosì... come / tanto... quanto — так само… як\n\n• Marco è più alto di Luca.\n• Questo è meno caro di quello.\n• È tanto bello quanto intelligente.\n\ndi — перед займенниками та числівниками\nche — перед двома прикметниками або інфінітивами\n\nSUPERLATIVO RELATIVO: il/la più + adj\n• È il più bello della classe.\n\nSUPERLATIVO ASSOLUTO: adj + -issimo/a/i/e\n• bellissimo · carissimo · facilissimo\n\nНЕПРАВИЛЬНІ:\nbuono → migliore (comparativo) · ottimo (superlativo)\ncattivo → peggiore · pessimo\ngrande → maggiore · massimo\npiccolo → minore · minimo`,
+      exercises: [
+        { q: "Marco è ___ alto ___ Luca.", ans: ["più", "di"], hint: "più ... di" },
+        { q: "Questo libro è ___ interessante.", ans: ["interessantissimo"], hint: "superlativo assoluto: -issimo" },
+        { q: "È il ___ bello della classe.", ans: ["più"], hint: "superlativo relativo: il più" },
+        { q: "Questo vino è ___ (buono, comp.)", ans: ["migliore"], hint: "buono → migliore (нерег.)" },
+        { q: "È ___ mangiare che bere.", ans: ["meglio"], hint: "bene → meglio" },
+        { q: "Questa pizza è ___! (buono, sup.ass.)", ans: ["buonissima", "ottima"], hint: "buonissima або ottima" },
+        { q: "È ___ caro ___ penso.", ans: ["più", "di"], hint: "più... di quanto/di + inf." },
+      ],
+    },
+    {
+      id: "it_reflexive", title: "Рефлексивні дієслова (Riflessivi)", icon: "🔁",
+      theory: `Рефлексивні дієслова: дія спрямована на самого себе.\nПронунції: mi · ti · si · ci · vi · si (перед дієсловом)\n\nalzarsi (вставати):\nio mi alzo · tu ti alzi · lui/lei si alza\nnoi ci alziamo · voi vi alzate · loro si alzano\n\nПоширені:\nalzarsi — вставати · sedersi — сідати\nlavarsi — митися · vestirsi — одягатися\nchiudersi — закриватися · chiamarsi — називатися\naddormentarsi — засипати · svegliarsi — прокидатися\nsentirsi — почуватися · innamorarsi — закохуватися\n\nPassato prossimo з ESSERE! Particip. узгодж. з підметом:\nMi sono alzato/a. · Ci siamo divertiti/e.`,
+      exercises: [
+        { q: "Io ___ alle 7. (alzarsi)", ans: ["mi alzo"], hint: "mi + alzo" },
+        { q: "Come ___ ? (chiamarsi, tu)", ans: ["ti chiami"], hint: "ti + chiami" },
+        { q: "Lei ___ stanca. (sentirsi)", ans: ["si sente"], hint: "si + sente" },
+        { q: "Noi ___ tardi. (svegliarsi)", ans: ["ci svegliamo"], hint: "ci + svegliamo" },
+        { q: "Voi ___ alle 8. (alzarsi)", ans: ["vi alzate"], hint: "vi + alzate" },
+        { q: "Ieri io ___ tardi. (addormentarsi)", ans: ["mi sono addormentato", "mi sono addormentata"], hint: "essere + part. uzg." },
+        { q: "Loro ___ molto. (divertirsi, pass.pr.)", ans: ["si sono divertiti", "si sono divertite"], hint: "si sono + part.mn." },
+      ],
+    },
+    {
+      id: "it_modal", title: "Модальні дієслова (Modali)", icon: "🎛️",
+      theory: `Tre modali principali + presente:\n\nPOTERE (могти, мати можливість):\nposso · puoi · può · possiamo · potete · possono\n\nDOVERE (повинен, мусити):\ndevo · devi · deve · dobbiamo · dovete · devono\n\nVOLERE (хотіти):\nvoglio · vuoi · vuole · vogliamo · volete · vogliono\n\nПісля модального → ІНФІНІТИВ:\n• Posso aiutarti. — Можу тобі допомогти.\n• Devo studiare. — Мушу вчитися.\n• Voglio un caffè. — Хочу каву. (без inf.)\n\nPassato prossimo: avere/essere (залежно від основного дієслова) + participio modale OR залишити in infinito:\n• Ho dovuto partire. / Sono dovuto/a partire.`,
+      exercises: [
+        { q: "Io non ___ venire. (potere)", ans: ["posso"], hint: "posso = io puoi? Ні — posso" },
+        { q: "Tu ___ studiare di più. (dovere)", ans: ["devi"], hint: "tu → devi" },
+        { q: "Lei ___ un caffè. (volere)", ans: ["vuole"], hint: "lui/lei → vuole" },
+        { q: "Noi ___ parlare. (potere)", ans: ["possiamo"], hint: "noi → possiamo" },
+        { q: "Voi ___ aspettare. (dovere)", ans: ["dovete"], hint: "voi → dovete" },
+        { q: "Loro ___ partire. (volere)", ans: ["vogliono"], hint: "loro → vogliono" },
+        { q: "___ aiutarmi? (potere, tu, ввічл.)", ans: ["Puoi"], hint: "tu → puoi" },
+      ],
+    },
+    {
+      id: "it_imperativo", title: "Наказовий спосіб (Imperativo)", icon: "📢",
+      theory: `IMPERATIVO — наказ, прохання, інструкції.\n\nRegolare (parlare / prendere / dormire):\n         parlare   prendere  dormire\ntu:      parla!    prendi!   dormi!\nnoi:     parliamo! prendiamo! dormiamo!\nvoi:     parlate!  prendete!  dormite!\n\nЗаперечення (tu): non + INFINITO\n• Non parlare! · Non fare rumore!\n\nНеправильні (tu форма):\nessere → sii! · avere → abbi! · fare → fa'! (fai!)\ndare → da'! · stare → sta'! · andare → va'!\ndire → di'! · venire → vieni! · uscire → esci!\n\nПрономи: приєднуються до дієслова\n• Dimmi! — Скажи мені!\n• Fallo! — Зроби це!\n• Alzati! — Вставай!`,
+      exercises: [
+        { q: "___ attenzione! (fare, tu)", ans: ["Fa'", "Fai"], hint: "fare → fa'!/fai!" },
+        { q: "___ qui! (venire, tu)", ans: ["Vieni"], hint: "venire → vieni!" },
+        { q: "Non ___ tardi! (arrivare, tu)", ans: ["arrivare"], hint: "neg.tu: non + infinito" },
+        { q: "___ pure! (andare, voi)", ans: ["Andate"], hint: "voi: -ate" },
+        { q: "___ la verità! (dire, tu)", ans: ["Di'", "Dì"], hint: "dire → di'!" },
+        { q: "___ pazienti! (essere, voi)", ans: ["Siate"], hint: "essere voi → siate" },
+        { q: "___ la! (prendere, tu, con pron.)", ans: ["Prendila"], hint: "prendi + la = prendila" },
+        { q: "___ mi! (dire, tu, con pron.)", ans: ["Dimmi"], hint: "di' + mi = dimmi" },
+      ],
+    },
+    {
+      id: "it_gerundio", title: "Герундій і дієприкметник (Gerundio & Participio)", icon: "🔧",
+      theory: `GERUNDIO PRESENTE: -ando (-are) / -endo (-ere/-ire)\nparlare → parlando · scrivere → scrivendo · dormire → dormendo\n\nНеправильні: fare→facendo · dire→dicendo · bere→bevendo\n\nВикористовується:\n1. STARE + gerundio = дія зараз (прогресивний)\n   Sto mangiando. — Я зараз їм.\n   Stava dormendo. — Він спав (саме тоді).\n\n2. Одночасна дія:\n   Ascoltando musica, studio. — Слухаючи музику, вчуся.\n\n3. Причина/умова:\n   Essendo stanco, sono andato a letto.\n\nPARTICIPIO PRESENTE: -ante/-ente\namante (той, хто любить) · interessante\n\nPARTICIPIO PASSATO: -ato/-uto/-ito (вже вивчали)\nÈ usato come aggettivo:\nuna porta chiusa · un lavoro finito`,
+      exercises: [
+        { q: "Gerundio: parlare →", ans: ["parlando"], hint: "-are → -ando" },
+        { q: "Gerundio: scrivere →", ans: ["scrivendo"], hint: "-ere → -endo" },
+        { q: "Gerundio: fare →", ans: ["facendo"], hint: "fare → facendo (нерег.)" },
+        { q: "Sto ___ la cena. (preparare)", ans: ["preparando"], hint: "stare + gerundio" },
+        { q: "Stavo ___ quando hai chiamato. (dormire)", ans: ["dormendo"], hint: "-ire → -endo" },
+        { q: "___ musica, mi rilasso. (ascoltare)", ans: ["Ascoltando"], hint: "gerundio = одночасна дія" },
+        { q: "Gerundio: dire →", ans: ["dicendo"], hint: "dire → dicendo (нерег.)" },
+      ],
+    },
+    {
+      id: "it_ci_ne", title: "Ci e Ne partitivi", icon: "🔹",
+      theory: `CI — відповідає на «де?» і «куoi?», замінює місце:\n• Vai a Roma? — Sì, ci vado. (туди йду)\n• Sei mai stato a Parigi? — Sì, ci sono stato.\n\nCI також у виразах:\nc'è / ci sono — є (існує)\nci vuole / ci vogliono — потрібно\n• C'è un problema. — Є проблема.\n• Ci vogliono due ore. — Потрібно дві години.\n\nNE — замінює частину, кількість (di + щось):\n• Quanti caffè bevi? — Ne bevo due. (їх п'ю два)\n• Parli di lavoro? — Sì, ne parlo. (про це говорю)\n• Vuoi del pane? — Sì, ne voglio un po'.\n\nNE також при виході/відходженні: andarsene\n• Me ne vado. — Я йду (звідси).`,
+      exercises: [
+        { q: "Vai a Roma? — Sì, ___ vado.", ans: ["ci"], hint: "ci замінює місце" },
+        { q: "___ sono due persone qui.", ans: ["Ci"], hint: "c'è/ci sono = є" },
+        { q: "Quanti fratelli hai? — ___ ho tre.", ans: ["Ne"], hint: "ne = їх (кількість)" },
+        { q: "Parli del problema? — Sì, ___ parlo.", ans: ["ne"], hint: "ne = di + щось" },
+        { q: "___ vuole un'ora per arrivare.", ans: ["Ci"], hint: "ci vuole = потрібно" },
+        { q: "Sei stato a Venezia? — No, non ___ sono mai stato.", ans: ["ci"], hint: "ci = там" },
+        { q: "Vuoi del vino? — Sì, ___ voglio un po'.", ans: ["ne"], hint: "ne = del vino (частина)" },
+      ],
+    },
+    {
+      id: "it_negazione", title: "Заперечення (Negazione)", icon: "🚫",
+      theory: `Просте заперечення: non + дієслово\n• Non capisco. · Non ho fame.\n\nПодвійне заперечення (non + друге заперечення — НОРМА!):\nnon... mai — ніколи\nnon... niente/nulla — нічого\nnon... nessuno — ніхто\nnon... ancora — ще не\nnon... più — більше не\nnon... né... né — ні... ні\n\n• Non ho mai visto questo film.\n• Non c'è nessuno. — Нікого немає.\n• Non mangio più carne. — Більше не їм м'яса.\n• Non ho ancora finito. — Ще не закінчив.\n\nNeanche / nemmeno / neppure = теж ні:\n• Neanche io. — Я теж ні.`,
+      exercises: [
+        { q: "Non vado ___ al mare. (ніколи)", ans: ["mai"], hint: "non ... mai" },
+        { q: "Non ho ___ da fare. (нічого)", ans: ["niente", "nulla"], hint: "non ... niente/nulla" },
+        { q: "Non c'è ___ in casa. (ніхто)", ans: ["nessuno"], hint: "non ... nessuno" },
+        { q: "Non ho ___ mangiato. (ще не)", ans: ["ancora"], hint: "non ... ancora" },
+        { q: "Non fumo ___. (більше не)", ans: ["più"], hint: "non ... più" },
+        { q: "Non voglio ___ tè ___ caffè.", ans: ["né", "né"], hint: "non ... né ... né" },
+        { q: "___ io capisco. (я теж ні)", ans: ["Neanche", "Nemmeno", "Neppure"], hint: "neanche/nemmeno io" },
+      ],
+    },
+    {
+      id: "it_questions", title: "Питання і питальні слова", icon: "❓",
+      theory: `Порядок слів у питанні: найчастіше питальне слово + дієслово + підмет\n\nЧи (yes/no) → інтонація або відсутність слова:\n• Parli italiano? — Ти говориш по-італійськи?\n\nПитальні слова:\nChi? — хто? (Chi è?)  \nChe cosa? / Cosa? / Che? — що?\nDove? — де? (Dove vai?)\nCome? — як? (Come stai?)\nQuando? — коли?\nPerché? — чому? / тому що\nQuanto/a/i/e? — скільки?\nQuale/i? — який/яка/які?\nDi dove sei? — Звідки ти?\nCon chi? · Per chi? · Da dove?\n\nВідповідь на Perché = Perché + indicativo:\n• Perché sei stanco? — Perché non ho dormito.`,
+      exercises: [
+        { q: "___ sei? (хто ти)", ans: ["Chi"], hint: "Chi = хто" },
+        { q: "___ vai? (куди йдеш)", ans: ["Dove"], hint: "Dove = де/куди" },
+        { q: "___ stai? (як справи)", ans: ["Come"], hint: "Come = як" },
+        { q: "___ arrivi? (коли приїдеш)", ans: ["Quando"], hint: "Quando = коли" },
+        { q: "___ anni hai? (скільки років)", ans: ["Quanti"], hint: "Quanti = скільки (чол.мн.)" },
+        { q: "___ sei stanco? (чому)", ans: ["Perché"], hint: "Perché = чому" },
+        { q: "___ libro preferisci? (який)", ans: ["Quale"], hint: "Quale = який" },
+        { q: "___ sei? (звідки)", ans: ["Di dove"], hint: "Di dove sei?" },
+      ],
+    },
+    {
+      id: "it_numbers_time", title: "Числа, час і дата", icon: "🔢",
+      theory: `ЧИСЛА:\n0 zero · 1 uno · 2 due · 3 tre · 4 quattro · 5 cinque\n6 sei · 7 sette · 8 otto · 9 nove · 10 dieci\n11 undici · 12 dodici · 13 tredici · 20 venti\n21 ventuno · 22 ventidue · 30 trenta · 100 cento\n1000 mille · 2000 duemila\n\nЧАС:\nChe ore sono? — Котра година?\nÈ l'una. (1:00) · Sono le due. (2:00)\nSono le tre e mezza. (3:30)\nSono le quattro e un quarto. (4:15)\nSono le cinque meno un quarto. (4:45)\n\nDATA:\nQuanto è oggi? / Quanti ne abbiamo oggi?\nÈ il tre marzo. · Oggi è lunedì.\n\nГІОРНИ: lunedì · martedì · mercoledì\ngiovedì · venerdì · sabato · domenica\n\nМЕСІ: gennaio · febbraio · marzo · aprile\nmaggio · giugno · luglio · agosto\nsettembre · ottobre · novembre · dicembre`,
+      exercises: [
+        { q: "15 + 7 = ___", ans: ["ventidue"], hint: "15=quindici, 7=sette, 22=ventidue" },
+        { q: "Che ore sono? 3:00 →", ans: ["Sono le tre"], hint: "Sono le + число" },
+        { q: "Che ore sono? 1:00 →", ans: ["È l'una"], hint: "1:00 → È l'una" },
+        { q: "3:30 →", ans: ["Sono le tre e mezza"], hint: "e mezza = і половина" },
+        { q: "Giovedì viene dopo ___.", ans: ["mercoledì"], hint: "lun-mar-mer-gio..." },
+        { q: "Il mese dopo marzo è ___.", ans: ["aprile"], hint: "mar-apr" },
+        { q: "Come si dice 1000?", ans: ["mille"], hint: "1000 = mille" },
+      ],
+    },
+    {
+      id: "it_trapassato", title: "Trapassato prossimo (давноминулий)", icon: "⏮️",
+      theory: `Trapassato prossimo = avere/essere (imperfetto) + participio passato\n= дія, що відбулась ДО іншої минулої дії\n\nCon AVERE:\navevo/avevi/aveva/avevamo/avevate/avevano + p.p.\n• Avevo già mangiato quando sei arrivato.\n  (Я вже поїв, коли ти прийшов.)\n\nCon ESSERE:\nero/eri/era/eravamo/eravate/erano + p.p.\n• Era già partita quando ho chiamato.\n  (Вона вже поїхала, коли я зателефонував.)\n\nТипові маркери: già (вже), appena (щойно), non ancora (ще не), dopo che (після того як)\n• Dopo che aveva finito, è uscito.`,
+      exercises: [
+        { q: "Quando sei arrivato, io ___ già mangiato.", ans: ["avevo"], hint: "avere imp.: avevo" },
+        { q: "Lei ___ già partita. (essere)", ans: ["era"], hint: "essere imp.: era" },
+        { q: "Non ___ ancora dormito quando ha chiamato.", ans: ["avevo"], hint: "non ancora + trapassato" },
+        { q: "Dopo che ___ finito, siamo usciti. (avere)", ans: ["avevamo"], hint: "noi: avevamo" },
+        { q: "Loro ___ già visto quel film.", ans: ["avevano"], hint: "loro: avevano" },
+        { q: "Non ___ mai stato a Roma prima. (essere)", ans: ["ero"], hint: "io: ero stato" },
+      ],
+    },
+    {
+      id: "it_congiuntivo_imp", title: "Congiuntivo imperfetto", icon: "🎭",
+      theory: `Congiuntivo imperfetto — після виразів бажання/думки у минулому\n(головне речення в минулому → congiuntivo imperfetto)\n\nparlare → parlass-:\nche io parlassi · tu parlassi · lui/lei parlasse\nnoi parlassimo · voi parlaste · loro parlassero\n\nvendere → vendes-:\nvendessi · vendessi · vendesse · vendessimo · vendeste · vendessero\n\ndormire → dormi-:\ndormissi · dormissi · dormisse…\n\nНеправильні:\nessere: fossi · fossi · fosse · fossimo · foste · fossero\navere: avessi · avessi · avesse…\nfare: facessi · venire: venissi · dare: dessi\n\nПеріод гіпотетичний (реальний/нереальний — тип 2):\nSe + congiuntivo imperfetto → condizionale presente\n• Se avessi tempo, viaggerei di più.\n  (Якби мав час, подорожував би більше.)`,
+      exercises: [
+        { q: "Pensavo che lui ___ stanco. (essere)", ans: ["fosse"], hint: "essere → fosse" },
+        { q: "Volevo che tu ___. (venire)", ans: ["venissi"], hint: "venire → venissi" },
+        { q: "Se ___ ricco, comprerei una villa. (essere)", ans: ["fossi"], hint: "fossi = якби я був" },
+        { q: "Speravo che voi ___ capito. (avere)", ans: ["aveste"], hint: "avere → aveste" },
+        { q: "Se ___ tempo, studierei. (avere)", ans: ["avessi"], hint: "avere → avessi" },
+        { q: "Era necessario che loro ___. (partire)", ans: ["partissero"], hint: "-ire → -issero" },
+      ],
+    },
+    {
+      id: "it_periodo_ipotetico", title: "Умовні речення (Periodo ipotetico)", icon: "⚡",
+      theory: `3 типи умовних речень:\n\nТИП 1 — реальна умова (теперішнє/майбутнє):\nSe + indicativo presente → indicativo futuro\n• Se ho tempo, verrò. (Якщо матиму час, прийду.)\n\nТИП 2 — нереальна умова (теперішнє):\nSe + congiuntivo imperfetto → condizionale presente\n• Se avessi soldi, comprerei una casa.\n  (Якби мав гроші, купив би будинок.)\n\nТИП 3 — нереальна умова (минуле):\nSe + congiuntivo trapassato → condizionale passato\n• Se avessi studiato, avrei superato l'esame.\n  (Якби вчив, склав би іспит.)\n\nMAGARI + congiuntivo = «якби тільки»:\n• Magari potessi venire! (Якби тільки міг прийти!)`,
+      exercises: [
+        { q: "Se ___ tempo, verrò. (avere, тип 1)", ans: ["ho"], hint: "тип 1: presente indicativo" },
+        { q: "Se ___ soldi, viaggerei. (avere, тип 2)", ans: ["avessi"], hint: "тип 2: cong.imp." },
+        { q: "Se ___ studiato, avresti passato. (тип 3)", ans: ["avessi"], hint: "тип 3: cong.trap." },
+        { q: "Se fossi ricco, ___ una villa. (comprare)", ans: ["comprerei"], hint: "condizionale presente" },
+        { q: "Se avesse chiamato, ___ risposto. (io)", ans: ["avrei risposto"], hint: "condizionale passato" },
+        { q: "Se fa bel tempo, ___ al mare. (andare, noi)", ans: ["andiamo"], hint: "тип 1: presente" },
+      ],
+    },
+    {
+      id: "it_passive", title: "Пасивний стан (Forma passiva)", icon: "↩️",
+      theory: `Пасив = essere + participio passato (узгоджується з підметом)\n\nПРЕЗЕНТ: La torta è mangiata da Marco.\nPASSATO: La torta è stata mangiata da Marco.\nIMPERFETTO: La torta veniva mangiata ogni giorno.\nFUTURO: La torta sarà mangiata domani.\n\nda = ким/чим виконана дія (аgente)\n\nALTERNATIВА — SI passivante:\n• Si parla italiano qui. — Тут говорять по-італійськи.\n• Si vendono case. — Продаються будинки.\n• Si mangia bene in Italia. — В Італії добре їдять.\n\nAndare + p.p. = обов'язковість (треба зробити):\n• Questo lavoro va fatto subito. (треба зробити негайно)`,
+      exercises: [
+        { q: "La lettera ___ scritta da Marco.", ans: ["è"], hint: "essere presente + p.p." },
+        { q: "Il film ___ ___ diretto da Fellini.", ans: ["è stato"], hint: "passato: è stato" },
+        { q: "___ parla italiano qui. (si passivante)", ans: ["Si"], hint: "si + verbo" },
+        { q: "Le case ___ vendute. (passivo pres.)", ans: ["sono"], hint: "essere + p.p.мн." },
+        { q: "Questo ___ fatto subito. (andare + obbligo)", ans: ["va"], hint: "andare + p.p." },
+        { q: "___ vendono molti libri qui.", ans: ["Si"], hint: "si vendono = пасив" },
+      ],
+    },
+    {
+      id: "it_discorso_indiretto", title: "Пряма та непряма мова", icon: "💬",
+      theory: `Непряма мова — переказ чужих слів.\n\nЗміни часів при переказі (головне речення в минулому):\npresente → imperfetto\npassato prossimo → trapassato prossimo\nfuturo → condizionale\nimperativo → di + infinito\n\nЗміни займенників і обставин:\nqui → lì/là · oggi → quel giorno · domani → il giorno dopo\nieri → il giorno prima · questo → quello\n\nПриклади:\n«Sono stanco.» → Disse che era stanco.\n«Verrò domani.» → Disse che sarebbe venuto il giorno dopo.\n«Vieni qui!» → Mi disse di andare lì.\n«Ho mangiato.» → Disse che aveva mangiato.`,
+      exercises: [
+        { q: "«Sono felice.» → Disse che ___ felice.", ans: ["era"], hint: "presente → imperfetto" },
+        { q: "«Verrò.» → Disse che ___.", ans: ["sarebbe venuto", "sarebbe venuta"], hint: "futuro → condizionale" },
+        { q: "«Ho mangiato.» → Disse che ___ mangiato.", ans: ["aveva"], hint: "pass.pr. → trapassato" },
+        { q: "«Vieni!» → Mi disse ___ andare.", ans: ["di"], hint: "imperativo → di + inf." },
+        { q: "«Abito qui.» → Disse che abitava ___.", ans: ["lì", "là"], hint: "qui → lì" },
+        { q: "«Studio ogni giorno.» → Disse che ___ ogni giorno.", ans: ["studiava"], hint: "presente → imperfetto" },
+      ],
+    },
+    {
+      id: "it_subordinate", title: "Складнопідрядні речення", icon: "🔗",
+      theory: `ПРИЧИНА (perché, poiché, dato che, siccome):\n• Non sono venuto perché ero malato.\n  siccome/poiché/dato che + indicativo (на початку)\n\nМЕТА (affinché, perché + congiuntivo):\n• Parlo lentamente affinché tu capisca.\n\nЧАС (quando, mentre, appena, dopo che, prima che):\n• Quando arrivi, chiamami.\n• Mentre studiavo, ascoltavo musica.\n• Appena finirò, ti chiamo.\n• Prima che parta, dobbiamo parlare. (+ cong.)\n\nУМОВА (se → già вивчали)\n\nКОНЦЕСІЯ (sebbene, benché, nonostante + cong.):\n• Sebbene sia stanco, continuo a lavorare.\n\nНАСЛІДОК (così... che, tanto... da):\n• Era così stanco che si è addormentato.\n\nВІДНОСНИ (che, cui, il quale):\n• Il libro che leggo è interessante.\n• La persona con cui parlo è mia amica.`,
+      exercises: [
+        { q: "___ ero malato, non sono venuto.", ans: ["Perché", "Poiché", "Dato che", "Siccome"], hint: "причина → perché/poiché/siccome" },
+        { q: "Parlo lento ___ tu capisca.", ans: ["affinché", "perché"], hint: "мета + congiuntivo" },
+        { q: "___ stanco, continuo. (sebbene)", ans: ["Sebbene sia", "Benché sia"], hint: "concessione + cong." },
+        { q: "Il libro ___ leggo è bello.", ans: ["che"], hint: "відносний займ. → che" },
+        { q: "La persona con ___ parlo è simpatica.", ans: ["cui"], hint: "prep + cui" },
+        { q: "Era ___ stanco ___ dormiva in piedi.", ans: ["così", "che"], hint: "così ... che" },
+      ],
+    },
+  ],
+  pl: [
+    {
+      id: "pl_gender", title: "Рід іменників", icon: "🧩",
+      theory: `3 роди:\n• Чоловічий (męski): закінчення на приголосну → stół, brat, pies\n• Жіночий (żeński): -a/-i → mama, kobieta, pani\n• Середній (nijaki): -o/-e/-ę/-um → okno, dziecko, imię`,
+      exercises: [
+        { q: "Рід: dom", ans: ["męski", "чоловічий"], hint: "закінч. на приголосну" },
+        { q: "Рід: kobieta", ans: ["żeński", "жіночий"], hint: "закінч. на -a" },
+        { q: "Рід: okno", ans: ["nijaki", "середній"], hint: "закінч. на -o" },
+        { q: "Рід: imię", ans: ["nijaki", "середній"], hint: "закінч. на -ę" },
+        { q: "Рід: brat", ans: ["męski", "чоловічий"], hint: "закінч. на приголосну" },
+      ],
+    },
+    {
+      id: "pl_present", title: "Теперішній час", icon: "⏱️",
+      theory: `I кон'югація (-ać), czytać (читати):\nja czytam · ty czytasz · on/ona czyta\nmy czytamy · wy czytacie · oni czytają\n\nII кон'югація (-ić/-yć), mówić (говорити):\nja mówię · ty mówisz · on/ona mówi\nmy mówimy · wy mówicie · oni mówią`,
+      exercises: [
+        { q: "Ja ___ książkę. (czytać)", ans: ["czytam"], hint: "ja: -m" },
+        { q: "Ty ___ po polsku? (mówić)", ans: ["mówisz"], hint: "ty: -sz" },
+        { q: "Ona ___ dużo. (pracować)", ans: ["pracuje"], hint: "-ować → -uje" },
+        { q: "My ___ razem. (mieszkać)", ans: ["mieszkamy"], hint: "my: -my" },
+        { q: "Oni ___ do szkoły. (iść)", ans: ["idą"], hint: "oni: -ą" },
+      ],
+    },
+    {
+      id: "pl_cases", title: "Відмінки — основи", icon: "🔢",
+      theory: `7 відмінків:\n1. Mianownik (Nom.) — хто? що?\n2. Dopełniacz (Gen.) — кого? чого? (після negacji, після liczebników)\n3. Celownik (Dat.) — кому? чому?\n4. Biernik (Acc.) — кого? що? (прямий додаток)\n5. Narzędnik (Ins.) — ким? чим? (jestem + Ins.)\n6. Miejscownik (Loc.) — про кого? де? (після: w, na, o, przy)\n7. Wołacz (Voc.) — звертання`,
+      exercises: [
+        { q: "Nie ma ___ (stół, Gen.)", ans: ["stołu"], hint: "Gen. чол.: -u" },
+        { q: "Daję to ___ (kolega, Dat.)", ans: ["koledze"], hint: "Dat. чол.: -e" },
+        { q: "Widzę ___ (pies, Acc.)", ans: ["psa"], hint: "Acc. одуш. = Gen." },
+        { q: "Jestem ___ (student, Ins.)", ans: ["studentem"], hint: "Ins. чол.: -em" },
+        { q: "Mówię o ___ (Polska, Loc.)", ans: ["Polsce"], hint: "Loc. жін.: -ce" },
+      ],
+    },
+  ],
+  en: [
+    {
+      id: "en_tenses", title: "Present Simple vs Continuous", icon: "⏱️",
+      theory: `Present Simple — регулярні дії, факти:\nI work · you work · he/she works (+s у 3-й особі)\n• I work every day.\n• She reads books.\n\nPresent Continuous — дія зараз:\nam/is/are + V-ing\n• I am working now.\n• They are eating lunch.`,
+      exercises: [
+        { q: "She ___ to school every day. (go)", ans: ["goes"], hint: "Simple, 3 ос. → +es" },
+        { q: "I ___ TV right now. (watch)", ans: ["am watching"], hint: "зараз → am + -ing" },
+        { q: "They ___ football on Sundays. (play)", ans: ["play"], hint: "щонеділі → Simple" },
+        { q: "He ___ a book now. (read)", ans: ["is reading"], hint: "now → Continuous" },
+        { q: "Water ___ at 100°C. (boil)", ans: ["boils"], hint: "факт → Simple, 3 ос." },
+        { q: "We ___ dinner now. (have)", ans: ["are having"], hint: "now → Continuous" },
+      ],
+    },
+    {
+      id: "en_articles", title: "Articles: a / an / the", icon: "🔤",
+      theory: `a — вперше згадуємо, приголосний звук: a cat, a university\nan — голосний звук: an apple, an hour\nthe — конкретний, вже відомий; єдиний у своєму роді\nБез артикля — загальний сенс, власні назви\n\n• I saw a dog. The dog was big.\n• The sun rises in the east.\n• I like cats. (загалом)`,
+      exercises: [
+        { q: "She is ___ teacher.", ans: ["a"], hint: "teacher → приголосний звук" },
+        { q: "He ate ___ apple.", ans: ["an"], hint: "apple → голосний звук" },
+        { q: "___ moon is bright tonight.", ans: ["The"], hint: "єдина у своєму роді" },
+        { q: "I have ___ idea!", ans: ["an"], hint: "idea → голосний звук" },
+        { q: "We went to ___ park.", ans: ["the"], hint: "конкретний, відомий" },
+        { q: "She is ___ honest person.", ans: ["an"], hint: "honest → звук [ɒ], голосний" },
+      ],
+    },
+    {
+      id: "en_past", title: "Past Simple", icon: "🕰️",
+      theory: `Правильні: + -ed  →  work→worked, play→played\n\nНеправильні (треба вчити):\ngo→went · come→came · see→saw\ntake→took · give→gave · eat→ate\nhave→had · be→was/were · do→did\n\nЗапитання: Did + інфінітив?\nЗаперечення: didn't + інфінітив`,
+      exercises: [
+        { q: "I ___ to the store. (go)", ans: ["went"], hint: "go → went" },
+        { q: "She ___ a cake. (bake)", ans: ["baked"], hint: "правильне: + -d" },
+        { q: "They ___ the movie. (see)", ans: ["saw"], hint: "see → saw" },
+        { q: "We ___ dinner. (have)", ans: ["had"], hint: "have → had" },
+        { q: "___ you call him?", ans: ["Did"], hint: "питання: Did + inf." },
+        { q: "She ___ happy. (be, одн.)", ans: ["was"], hint: "be → was (одн.)" },
+      ],
+    },
+    {
+      id: "en_modal", title: "Модальні дієслова", icon: "🎛️",
+      theory: `can — вміти / мати можливість\ncould — міг / ввічливе прохання\nmust — повинен (внутрішня необхідність)\nhave to — повинен (зовнішня вимога)\nshould — варто (рекомендація)\nmay/might — можливо / дозвіл\n\nПісля модальних → інфінітив БЕЗ to\n✓ She can swim.   ✗ She can to swim.`,
+      exercises: [
+        { q: "You ___ smoke here. (заборона)", ans: ["cannot", "can't", "must not", "mustn't"], hint: "can't / must not" },
+        { q: "He ___ speak French. (вміє)", ans: ["can"], hint: "вміння → can" },
+        { q: "I ___ go to the doctor. (треба)", ans: ["must", "have to", "should"], hint: "must / have to" },
+        { q: "___ I open the window? (дозвіл)", ans: ["May", "Can", "Could"], hint: "May/Can/Could + I" },
+        { q: "You ___ rest more. (рада)", ans: ["should"], hint: "рекомендація → should" },
+        { q: "It ___ rain tomorrow. (можливо)", ans: ["might", "may"], hint: "можливо → might/may" },
+      ],
+    },
+  ],
+};
+
+/* ═══════════════════════════════════════════════
+   GRAMMAR VIEW
+═══════════════════════════════════════════════ */
+function GrammarView({ activeLang }) {
+  const topics   = GRAMMAR[activeLang] || [];
+  const [sel, setSel]       = useState(null);   // selected topic id
+  const [screen, setScreen] = useState("list"); // list | theory | quiz
+  const [qIdx, setQIdx]     = useState(0);
+  const [input, setInput]   = useState("");
+  const [status, setStatus] = useState("idle"); // idle | correct | wrong
+  const [score, setScore]   = useState({ correct: 0, wrong: 0 });
+  const [done, setDone]     = useState(false);
+  const [progress, setProgress] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ifc_grammar") || "{}"); } catch { return {}; }
+  });
+  const inputRef = useRef(null);
+
+  useEffect(() => { setSel(null); setScreen("list"); }, [activeLang]);
+  useEffect(() => { if (screen === "quiz" && status === "idle") inputRef.current?.focus(); }, [qIdx, status, screen]);
+
+  const topic = topics.find(t => t.id === sel);
+
+  const saveProgress = (id, data) => {
+    const next = { ...progress, [id]: data };
+    setProgress(next);
+    localStorage.setItem("ifc_grammar", JSON.stringify(next));
+  };
+
+  const startQuiz = () => {
+    setQIdx(0); setInput(""); setStatus("idle");
+    setScore({ correct: 0, wrong: 0 }); setDone(false);
+    setScreen("quiz");
+  };
+
+  const checkAnswer = () => {
+    if (!topic || status !== "idle") return;
+    const ex  = topic.exercises[qIdx];
+    const ok  = ex.ans.some(a => normalize(a) === normalize(input));
+    setStatus(ok ? "correct" : "wrong");
+    const ns = { correct: score.correct + (ok ? 1 : 0), wrong: score.wrong + (ok ? 0 : 1) };
+    setScore(ns);
+    if (qIdx + 1 >= topic.exercises.length) {
+      const pct = Math.round((ns.correct / topic.exercises.length) * 100);
+      saveProgress(topic.id, { pct, date: Date.now() });
+    }
+  };
+
+  const nextQ = () => {
+    if (qIdx + 1 >= (topic?.exercises.length || 0)) { setDone(true); return; }
+    setQIdx(q => q + 1); setInput(""); setStatus("idle");
+  };
+
+  const restart = () => {
+    setQIdx(0); setInput(""); setStatus("idle");
+    setScore({ correct: 0, wrong: 0 }); setDone(false);
+  };
+
+  const sc = { correct: { bg: C.good.bg, border: C.good.border, text: C.good.text },
+               wrong:   { bg: C.again.bg, border: C.again.border, text: C.again.text },
+               idle:    { bg: C.white, border: C.border, text: C.ink } }[status];
+  const ex = topic?.exercises[qIdx];
+
+  /* ── LIST ── */
+  if (screen === "list") return (
+    <div style={{ padding: `16px ${SIDE}px 40px` }}>
+      <h2 style={sectionTitle}>📖 Граматика</h2>
+      <p style={{ fontSize: 12, color: C.muted, marginBottom: 20 }}>
+        {LANGUAGES[activeLang]?.label} · {topics.length} тем
+      </p>
+      {topics.map(t => {
+        const p = progress[t.id];
+        return (
+          <div key={t.id} onClick={() => { setSel(t.id); setScreen("theory"); }}
+            style={{
+              background: C.white, borderRadius: 16, padding: "16px 14px",
+              marginBottom: 10, border: `1.5px solid ${C.soft}`,
+              boxShadow: "0 2px 8px rgba(26,26,46,0.06)",
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 14,
+              transition: "box-shadow 0.15s",
+            }}
+            onMouseEnter={e => e.currentTarget.style.boxShadow = "0 4px 16px rgba(26,26,46,0.12)"}
+            onMouseLeave={e => e.currentTarget.style.boxShadow = "0 2px 8px rgba(26,26,46,0.06)"}
+          >
+            <span style={{ fontSize: 28, flexShrink: 0 }}>{t.icon}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: C.ink }}>{t.title}</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                {t.exercises.length} вправ
+                {p ? ` · остання спроба: ${p.pct}%` : " · не розпочато"}
+              </div>
+              {p && (
+                <div style={{ height: 3, background: C.soft, borderRadius: 3, marginTop: 6, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${p.pct}%`, borderRadius: 3,
+                    background: p.pct >= 80 ? C.sage : p.pct >= 50 ? C.gold : C.terra }} />
+                </div>
+              )}
+            </div>
+            <span style={{ fontSize: 16, color: C.faint, flexShrink: 0 }}>›</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  /* ── THEORY ── */
+  if (screen === "theory" && topic) return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ height: 56, flexShrink: 0, padding: `0 ${SIDE}px`,
+        display: "flex", alignItems: "center", gap: 10,
+        borderBottom: `1px solid ${C.soft}`,
+        background: "rgba(250,248,243,0.95)", backdropFilter: "blur(8px)" }}>
+        <button onClick={() => setScreen("list")} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, padding: "4px 6px", color: C.ink, flexShrink: 0 }}>←</button>
+        <span style={{ fontSize: 18 }}>{topic.icon}</span>
+        <div style={{ flex: 1, minWidth: 0, fontFamily: "'Playfair Display',serif", fontSize: 16, fontWeight: 700, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topic.title}</div>
+      </div>
+      <div className="tab-scroll">
+        <div style={{ padding: `20px ${SIDE}px 40px` }}>
+          {/* Theory card */}
+          <div style={{ background: C.white, borderRadius: 16, padding: "18px 16px", border: `1.5px solid ${C.soft}`, marginBottom: 20 }}>
+            <div style={{ fontSize: 11, color: C.terra, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 12 }}>Теорія</div>
+            <pre style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: C.ink, lineHeight: 1.75, whiteSpace: "pre-wrap", margin: 0 }}>{topic.theory}</pre>
+          </div>
+          {/* Start quiz button */}
+          <Btn variant="terra" onClick={startQuiz} style={{ width: "100%", padding: "14px", fontSize: 15 }}>
+            Почати вправи ({topic.exercises.length} запитань) →
+          </Btn>
+          {progress[topic.id] && (
+            <div style={{ textAlign: "center", marginTop: 10, fontSize: 12, color: C.muted }}>
+              Попередній результат: {progress[topic.id].pct}%
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ── QUIZ ── */
+  if (screen === "quiz" && topic) return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: `12px ${SIDE}px 12px` }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexShrink: 0 }}>
+        <button onClick={() => setScreen("theory")} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, padding: "4px", color: C.ink, flexShrink: 0 }}>←</button>
+        <div style={{ flex: 1, fontWeight: 700, fontSize: 14, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topic.title}</div>
+        <span style={{ fontSize: 12, color: C.muted, flexShrink: 0 }}>{qIdx + 1}/{topic.exercises.length}</span>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ height: 4, background: C.soft, borderRadius: 4, overflow: "hidden", flexShrink: 0, marginBottom: 10 }}>
+        <div style={{ height: "100%", borderRadius: 4, transition: "width 0.3s",
+          width: `${Math.round(((qIdx + (status !== "idle" ? 1 : 0)) / topic.exercises.length) * 100)}%`,
+          background: `linear-gradient(90deg,${C.terra},${C.gold})` }} />
+      </div>
+
+      {done ? (
+        /* Done */
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 56 }}>{score.wrong === 0 ? "🏆" : score.correct >= topic.exercises.length * 0.7 ? "🎉" : "💪"}</div>
+          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 22, fontWeight: 700, color: C.ink }}>
+            {Math.round(score.correct / topic.exercises.length * 100)}%
+          </div>
+          <div style={{ fontSize: 14, color: C.muted }}>✅ {score.correct} правильно · ❌ {score.wrong} помилок</div>
+          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+            <Btn onClick={restart}>Ще раз</Btn>
+            <Btn variant="terra" onClick={() => setScreen("theory")}>← Теорія</Btn>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Exercise card */}
+          <div style={{ flex: 1, minHeight: 0, borderRadius: 20, padding: "20px 18px",
+            background: sc.bg, border: `2px solid ${sc.border}`,
+            boxShadow: "0 6px 30px rgba(26,26,46,0.09)",
+            display: "flex", flexDirection: "column", gap: 12,
+            transition: "background 0.2s, border-color 0.2s" }}>
+            <div style={{ fontSize: 10, color: C.faint, textTransform: "uppercase", letterSpacing: "0.14em" }}>Вправа {qIdx + 1}</div>
+            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 22, fontWeight: 700, color: C.ink, lineHeight: 1.4 }}>
+              {ex.q}
+            </div>
+            {status !== "idle" && (
+              <div style={{ marginTop: 4 }}>
+                {status === "correct" ? (
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.good.text }}>✓ Правильно!</div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.again.text }}>✗ Правильна відповідь:</div>
+                    <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 19, color: C.ink, marginTop: 4 }}>
+                      {ex.ans[0]}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {status === "idle" && (
+              <div style={{ marginTop: "auto", fontSize: 12, color: C.faint, display: "flex", alignItems: "center", gap: 6 }}>
+                💡 {ex.hint}
+              </div>
+            )}
+          </div>
+
+          {/* Input */}
+          <div style={{ flexShrink: 0, display: "flex", gap: 8, marginTop: 10 }}>
+            <input ref={inputRef} value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") { status === "idle" ? checkAnswer() : nextQ(); } }}
+              disabled={status !== "idle"}
+              placeholder="Введи відповідь…"
+              style={{ ...inputStyle, flex: 1, marginBottom: 0, fontSize: 16, padding: "13px 14px",
+                background: sc.bg, borderColor: sc.border, color: sc.text, transition: "all 0.2s" }}
+            />
+          </div>
+
+          {/* Buttons */}
+          <div style={{ flexShrink: 0, display: "flex", gap: 8, marginTop: 8 }}>
+            {status === "idle" ? (
+              <Btn variant="primary" onClick={checkAnswer} style={{ flex: 1 }}>Перевірити ↵</Btn>
+            ) : (
+              <Btn variant="terra" onClick={nextQ} style={{ flex: 1 }}>
+                {qIdx + 1 >= topic.exercises.length ? "Завершити 🏁" : "Далі →"}
+              </Btn>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  return null;
 }
 
 /* ═══════════════════════════════════════════════
@@ -714,6 +1765,8 @@ function Btn({ onClick, children, variant = "ghost", style: s = {} }) {
 
 const TABS = [
   { id: "cards",    icon: "🃏", label: "Картки" },
+  { id: "practice", icon: "⌨️", label: "Практика" },
+  { id: "grammar",  icon: "📖", label: "Граматика" },
   { id: "create",   icon: "✏️", label: "Створити" },
   { id: "settings", icon: "⚙️", label: "Налаштування" },
 ];
@@ -900,6 +1953,21 @@ export default function App() {
     </div>
   );
 
+
+  /* ── PRACTICE TAB ── */
+  const PracticeTab = <PracticeView
+    words={words}
+    dictNames={dictNames}
+    dictName={dictName}
+    displayName={displayName}
+    switchDict={switchDict}
+    speak={speak}
+    activeLang={activeLang}
+  />;
+
+  /* ── GRAMMAR TAB ── */
+  const GrammarTab = <GrammarView activeLang={activeLang} />;
+
   /* ── CREATE TAB ── */
   const CreateTab = (
     <div style={{ padding: `20px ${SIDE}px 40px` }}>
@@ -1018,7 +2086,7 @@ export default function App() {
   /* ── SHARED STYLES ── */
   const globalStyle = `
     @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@400;500;600&display=swap');
-    * { box-sizing: border-box; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     html { height: 100%; -webkit-text-size-adjust: none; text-size-adjust: none; }
     body { background: ${C.paper}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%; }
     #root { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
@@ -1097,6 +2165,8 @@ export default function App() {
         <div className="tab-scroll-outer">
           <div className="tab-scroll">
             {tab === "cards"    ? CardsTab    : null}
+            {tab === "practice" ? PracticeTab : null}
+            {tab === "grammar"  ? GrammarTab  : null}
             {tab === "create"   ? CreateTab   : null}
             {tab === "settings" ? SettingsTab : null}
           </div>
