@@ -389,8 +389,9 @@ async function searchImages(query) {
 /* ═══════════════════════════════════════════════
    CARD EDIT ROW
 ═══════════════════════════════════════════════ */
-function CardEditRow({ card, num, onChange, onDelete }) {
+function CardEditRow({ card, num, onChange, onDelete, forceImageMode }) {
   const [mode, setMode]           = useState(card.image ? "image" : "text");
+  const effectiveMode = forceImageMode ? "image" : mode;
   const [searching, setSearching] = useState(false);
   const [results, setResults]     = useState([]);
   const [searchErr, setSearchErr] = useState("");
@@ -399,15 +400,15 @@ function CardEditRow({ card, num, onChange, onDelete }) {
   const switchMode = (m) => {
     setMode(m);
     setResults([]);
-    if (m === "text")  onChange("image", "");
-    if (m === "image") onChange("translation", "");
+    if (m === "text") onChange("image", "");
+    // translation is kept when switching to image mode
   };
 
   const handleFile = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => { onChange("image", ev.target.result); onChange("translation", ""); };
+    reader.onload = (ev) => { onChange("image", ev.target.result); };
     reader.readAsDataURL(file);
     e.target.value = "";
   };
@@ -431,13 +432,12 @@ function CardEditRow({ card, num, onChange, onDelete }) {
 
   const pickImage = (url) => {
     onChange("image", url);
-    onChange("translation", "");
     setResults([]);
   };
 
   return (
     <div style={{
-      background: C.white, borderRadius: 14, padding: "12px 8px", marginBottom: 10,
+      background: C.white, borderRadius: 16, padding: "14px 14px", marginBottom: 10,
       border: `1.5px solid ${C.soft}`, boxShadow: "0 2px 6px rgba(26,26,46,0.05)",
     }}>
       {/* Word row */}
@@ -457,16 +457,16 @@ function CardEditRow({ card, num, onChange, onDelete }) {
         {[["text", "Текст"], ["image", "🖼️ Зображення"]].map(([m, label]) => (
           <button key={m} onClick={() => switchMode(m)} style={{
             padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600,
-            border: `1.5px solid ${mode === m ? C.terra : C.border}`,
-            background: mode === m ? "#fdf2ee" : C.white,
-            color: mode === m ? C.terra : C.muted,
+            border: `1.5px solid ${effectiveMode === m ? C.terra : C.border}`,
+            background: effectiveMode === m ? "#fdf2ee" : C.white,
+            color: effectiveMode === m ? C.terra : C.muted,
             cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s",
           }}>{label}</button>
         ))}
       </div>
 
       {/* Content */}
-      {mode === "text" ? (
+      {effectiveMode === "text" ? (
         <input
           value={card.translation || ""}
           onChange={e => onChange("translation", e.target.value)}
@@ -632,7 +632,8 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
       .map(({ _id, ...rest }) => {
         const card = { word: rest.word.trim() };
         if (rest.image) card.image = rest.image;
-        else card.translation = rest.translation || "";
+        if (rest.translation) card.translation = rest.translation;
+        if (!rest.image && !rest.translation) card.translation = "";
         return card;
       });
     onSave(cleaned);
@@ -735,6 +736,7 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
               num={i + 1}
               onChange={(field, val) => updateCard(card._id, field, val)}
               onDelete={() => deleteCard(card._id)}
+              forceImageMode={!!bulkProgress}
             />
           ))}
 
@@ -1988,7 +1990,7 @@ export default function App() {
 
       <h2 style={{ ...sectionTitle, marginTop: 32 }}>📚 Мої словники</h2>
       {dictNames.map(n => (
-        <div key={n} style={{ background: C.white, borderRadius: 14, padding: "12px 8px", marginBottom: 10, border: `1.5px solid ${C.soft}`, boxShadow: "0 2px 8px rgba(26,26,46,0.06)" }}>
+        <div key={n} style={{ background: C.white, borderRadius: 16, padding: "14px 14px", marginBottom: 10, border: `1.5px solid ${C.soft}`, boxShadow: "0 2px 8px rgba(26,26,46,0.06)" }}>
           <div style={{ display: "flex", alignItems: "center" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, color: C.ink, fontSize: 15 }}>{displayName(n)}</div>
@@ -1998,7 +2000,8 @@ export default function App() {
               </div>
             </div>
             <button onClick={() => { switchDict(n); setTab("cards"); }} style={linkBtn}>Відкрити</button>
-            <button onClick={() => setEditingDict(n)} style={{ ...linkBtn, marginLeft: 14 }}>✏️ Редагувати</button>
+            <button onClick={() => setEditingDict(n)} style={{ ...linkBtn, marginLeft: 14 }}>✏️</button>
+            <button onClick={() => shareDict(n)} style={{ ...linkBtn, marginLeft: 14 }}>⬆️</button>
             <button onClick={() => deleteDict(n)} style={{ ...linkBtn, color: "#c0392b", marginLeft: 14 }}>🗑️</button>
           </div>
         </div>
@@ -2013,7 +2016,7 @@ export default function App() {
       <SettingRow label="Авто-озвучення" desc="Говорити слово при переході до нової картки">
         <Toggle value={autoSpeak} onChange={setAutoSpeak} />
       </SettingRow>
-      <div style={{ background: C.white, borderRadius: 16, padding: "16px 10px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
+      <div style={{ background: C.white, borderRadius: 16, padding: "16px 14px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: C.ink, marginBottom: 4 }}>🎙️ Голос — {LANGUAGES[activeLang]?.label}</div>
         {sysVoices.length > 0 && (
           <>
@@ -2073,7 +2076,7 @@ export default function App() {
       <SettingRow label="Скинути прогрес" desc="Видалити весь прогрес навчання та XP">
         <Btn variant="again" onClick={() => { if (window.confirm("Скинути весь прогрес?")) { persist({ ...data, progress: {}, xp: 0, level: 1 }); showToast("✅ Прогрес скинуто"); } }}>Скинути</Btn>
       </SettingRow>
-      <div style={{ background: C.white, borderRadius: 16, padding: "14px 10px", border: `1.5px solid ${C.soft}`, lineHeight: 1.8 }}>
+      <div style={{ background: C.white, borderRadius: 16, padding: "14px 14px", border: `1.5px solid ${C.soft}`, lineHeight: 1.8 }}>
         <div style={{ fontWeight: 700, color: C.ink, marginBottom: 8 }}>Про застосунок</div>
         <div style={{ fontSize: 13, color: C.muted }}>Flashcards · Spaced Repetition</div>
         <div style={{ fontSize: 13, color: C.muted }}>Словників: {dictNames.length} · Слів: {Object.values(data.dictionaries).flat().length}</div>
@@ -2232,7 +2235,7 @@ function Toast({ toast }) {
 
 function SettingRow({ label, desc, children }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.white, borderRadius: 16, padding: "16px 10px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.white, borderRadius: 16, padding: "16px 14px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
       <div style={{ flex: 1, marginRight: 16 }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>{label}</div>
         <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{desc}</div>
