@@ -3,24 +3,49 @@ import { useState, useEffect, useRef, useCallback } from "react";
 /* ═══════════════════════════════════════════════
    CONSTANTS & HELPERS
 ═══════════════════════════════════════════════ */
-const C = {
-  ink: "#1a1a2e",
-  paper: "#faf8f3",
-  cream: "#f0ebe0",
-  terra: "#c0583a",
-  terraLight: "#e8795f",
-  gold: "#d4a843",
-  sage: "#6b8f71",
-  border: "#e2ddd4",
-  soft: "#e8e2d6",
-  muted: "#999",
-  faint: "#bbb",
-  white: "#ffffff",
-  again: { bg: "#fdecea", border: "#f5c6c2", text: "#c0392b" },
-  hard:  { bg: "#fff3e0", border: "#f5dcb0", text: "#c07a28" },
-  good:  { bg: "#e8f5e9", border: "#b6d9b9", text: "#2e7d32" },
-  easy:  { bg: "#e3f2fd", border: "#aecff5", text: "#1565c0" },
+/* ═══════════════════════════════════════════════
+   THEMES
+═══════════════════════════════════════════════ */
+const THEMES = {
+  light: {
+    ink:        "#1a2f4a",
+    paper:      "#eef3fb",
+    cream:      "#dde8f7",
+    terra:      "#3a6fd8",
+    terraLight: "#6b9de8",
+    gold:       "#5baad8",
+    sage:       "#4a90c4",
+    border:     "#bfd2ec",
+    soft:       "#d4e4f5",
+    muted:      "#6b8fb0",
+    faint:      "#9cb8d4",
+    white:      "#f8faff",
+    again: { bg: "#fdecea", border: "#f5c6c2", text: "#b83232" },
+    hard:  { bg: "#fef6e4", border: "#f0d88a", text: "#8a6010" },
+    good:  { bg: "#e4f2eb", border: "#9dd4b0", text: "#1f6b38" },
+    easy:  { bg: "#dbeeff", border: "#90c4f5", text: "#1254a0" },
+  },
+  dark: {
+    ink:        "#d6e8ff",
+    paper:      "#0d1b2e",
+    cream:      "#162540",
+    terra:      "#5b9cf0",
+    terraLight: "#7db5f5",
+    gold:       "#5baad8",
+    sage:       "#4a90c4",
+    border:     "#1e3a5f",
+    soft:       "#162038",
+    muted:      "#6a96c8",
+    faint:      "#2e5080",
+    white:      "#111f35",
+    again: { bg: "#2a1015", border: "#5c2020", text: "#f08888" },
+    hard:  { bg: "#241a08", border: "#5a4010", text: "#d4a840" },
+    good:  { bg: "#0d2418", border: "#1a5030", text: "#50d880" },
+    easy:  { bg: "#0a1d38", border: "#1a3a6a", text: "#70b8f8" },
+  },
 };
+
+let C = { ...THEMES.light };
 
 // ─── Горизонтальний відступ від краю екрана — міняй тут ───
 const SIDE = 8; // px
@@ -153,6 +178,16 @@ const DEFAULT_DATA = {
   },
   progress: {},
 };
+
+function buildShareText(name, cards) {
+  const lines = cards.map(c => {
+    let line = c.word;
+    if (c.translation) line += ` = ${c.translation}`;
+    if (c.image) line += `\n  🖼 ${c.image}`;
+    return line;
+  });
+  return `📚 ${name}\n${"─".repeat(28)}\n${lines.join("\n")}`;
+}
 
 function loadData() {
   try {
@@ -298,57 +333,169 @@ function useInstallPrompt() {
 }
 
 /* ═══════════════════════════════════════════════
+   VIEWPORT HOOK — блокує зум, тримає висоту
+═══════════════════════════════════════════════ */
+function useViewportHeight() {
+  const [vh, setVh] = useState(() => window.innerHeight);
+
+  useEffect(() => {
+    // 1. Блокуємо зум — переписуємо/додаємо мета-тег
+    const existing = document.querySelector('meta[name="viewport"]');
+    const content = "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no";
+    if (existing) {
+      existing.setAttribute("content", content);
+    } else {
+      const meta = document.createElement("meta");
+      meta.name = "viewport";
+      meta.content = content;
+      document.head.prepend(meta);
+    }
+
+    // 2. visualViewport — дає реальну висоту без клавіатури
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const update = () => {
+      // offsetTop — скільки сторінка "з'їхала" вгору через клавіатуру
+      const h = Math.round(vv.height + vv.offsetTop);
+      setVh(h);
+      // Також пишемо CSS-змінну для body, щоб #root міг її використати
+      document.documentElement.style.setProperty("--app-h", h + "px");
+    };
+
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+
+  return vh;
+}
+
+/* ═══════════════════════════════════════════════
    FLIP CARD
 ═══════════════════════════════════════════════ */
-function FlipCard({ front, back, backImage, frontLabel, cardKey }) {
-  const [flipped, setFlipped] = useState(false);
-  useEffect(() => setFlipped(false), [cardKey]);
+function FlipCard({ front, back, backImage, frontLabel, cardKey, onNext, onPrev }) {
+  const [flipped, setFlipped]   = useState(false);
+  const [dragX, setDragX]       = useState(0);
+  // gesture: null | "swipe" | "tap"
+  const gesture  = useRef(null);
+  const touchStart = useRef(null);
+
+  useEffect(() => { setFlipped(false); setDragX(0); gesture.current = null; }, [cardKey]);
+
+  const onTouchStart = (e) => {
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    gesture.current = null;   // не знаємо ще що це
+    setDragX(0);
+  };
+
+  const onTouchMove = (e) => {
+    if (!touchStart.current) return;
+    const dx = e.touches[0].clientX - touchStart.current.x;
+    const dy = e.touches[0].clientY - touchStart.current.y;
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+
+    // Визначаємо тип жесту після 10px руху — і фіксуємо його
+    if (gesture.current === null && (adx > 10 || ady > 10)) {
+      // Свайп тільки якщо рух явно горизонтальний: горизонт > 2× вертикаль
+      gesture.current = adx > ady * 2 ? "swipe" : "tap";
+    }
+
+    if (gesture.current === "swipe") {
+      e.preventDefault();   // не скролимо сторінку
+      setDragX(dx);
+    }
+  };
+
+  const onTouchEnd = (e) => {
+    if (!touchStart.current) return;
+    const dx = e.changedTouches[0].clientX - touchStart.current.x;
+    const adx = Math.abs(dx);
+
+    if (gesture.current === "swipe" && adx > 72) {
+      // Підтверджений горизонтальний свайп досить великий — гортаємо картку
+      setDragX(0);
+      gesture.current = null;
+      touchStart.current = null;
+      dx > 0 ? onPrev?.() : onNext?.();
+      return;
+    }
+
+    // Все інше (включно з коротким свайпом або "tap") — перевертаємо
+    setDragX(0);
+    gesture.current = null;
+    touchStart.current = null;
+
+    // Вважаємо тапом якщо свайп НЕ підтвердився (тобто не "swipe" з великим dx)
+    setFlipped(f => !f);
+  };
+
+  const isSwipingNow = gesture.current === "swipe" && Math.abs(dragX) > 0;
+  const rotate  = Math.max(-18, Math.min(18, dragX / 12));
+  const opacity = isSwipingNow ? Math.max(0.5, 1 - Math.abs(dragX) / 300) : 1;
 
   return (
-    <div onClick={() => setFlipped(f => !f)}
-      style={{ perspective: 1200, cursor: "pointer", userSelect: "none", height: "100%" }}>
+    <div
+      onClick={() => {
+        // onClick спрацьовує тільки при кліку мишею (не touch),
+        // бо на touch ми вже обробили в onTouchEnd
+        if ("ontouchstart" in window) return;
+        setFlipped(f => !f);
+      }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      style={{
+        perspective: 1200, cursor: "pointer", userSelect: "none", height: "100%",
+        transform: isSwipingNow ? `translateX(${dragX * 0.38}px) rotate(${rotate}deg)` : "none",
+        opacity,
+        transition: isSwipingNow ? "none" : "transform 0.28s cubic-bezier(.2,.8,.3,1), opacity 0.28s",
+        willChange: "transform",
+      }}>
       <div style={{
         position: "relative", width: "100%", height: "100%",
         transformStyle: "preserve-3d",
-        transition: "transform 0.55s cubic-bezier(.4,0,.2,1)",
+        transition: "transform 0.52s cubic-bezier(.4,0,.2,1)",
         transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
       }}>
         {/* FRONT */}
-        <div style={{ ...faceStyle, background: C.white }}>
-          <span style={labelStyle}>{frontLabel || "Слово"}</span>
-          <span style={wordStyle}>{front}</span>
-          <span style={{ fontSize: 11, color: C.faint, marginTop: 6 }}>натисни, щоб перевернути</span>
+        <div style={{ ...faceStyle(), background: C.white }}>
+          <span style={labelStyle()}>{frontLabel || "Слово"}</span>
+          <span style={wordStyle()}>{front}</span>
+          <span style={{ fontSize: 11, color: C.faint, marginTop: 4 }}>
+            торкніться щоб перевернути · свайп для навігації
+          </span>
         </div>
         {/* BACK */}
         <div style={{
-          ...faceStyle, background: C.cream,
+          ...faceStyle(),
+          background: `linear-gradient(160deg, ${C.cream} 0%, #daeeff 100%)`,
           transform: "rotateY(180deg)",
           padding: backImage ? "16px" : "0 28px",
         }}>
           {backImage ? (
             <>
-              <span style={labelStyle}>Зображення</span>
-              {/* flex:1 + height:0 — стандартний трюк щоб img міг рахувати maxHeight відносно батька */}
+              <span style={labelStyle()}>Зображення</span>
               <div style={{
                 flex: 1, height: 0, width: "100%",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 padding: "8px 0", overflow: "hidden",
               }}>
-                <img
-                  src={backImage}
-                  alt={front}
-                  style={{
-                    width: "100%", height: "100%",
-                    objectFit: "contain", borderRadius: 12,
-                    boxShadow: "0 2px 12px rgba(0,0,0,0.10)",
-                  }}
-                />
+                <img src={backImage} alt={front} style={{
+                  width: "100%", height: "100%",
+                  objectFit: "contain", borderRadius: 14,
+                  boxShadow: "0 4px 18px rgba(30,60,120,0.13)",
+                }} />
               </div>
             </>
           ) : (
             <>
-              <span style={labelStyle}>Переклад</span>
-              <span style={wordStyle}>{back}</span>
+              <span style={labelStyle()}>Переклад</span>
+              <span style={wordStyle()}>{back}</span>
             </>
           )}
         </div>
@@ -357,45 +504,80 @@ function FlipCard({ front, back, backImage, frontLabel, cardKey }) {
   );
 }
 
-const faceStyle = {
+const faceStyle  = () => ({
   position: "absolute", inset: 0,
   display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8,
-  borderRadius: 22, border: `2px solid ${C.border}`,
-  boxShadow: `0 8px 40px rgba(26,26,46,0.11), 0 2px 8px rgba(0,0,0,0.05)`,
+  borderRadius: 24, border: `1.5px solid ${C.border}`,
+  boxShadow: `0 8px 40px rgba(30,60,120,0.10), 0 2px 8px rgba(30,60,120,0.06)`,
   backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden",
   padding: "0 28px",
-};
-const labelStyle = { fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", color: C.faint };
-const wordStyle = { fontFamily: "'Playfair Display', Georgia, serif", fontSize: 38, fontWeight: 700, color: C.ink, textAlign: "center", lineHeight: 1.2 };
+});
+const labelStyle = () => ({ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", color: C.faint });
+const wordStyle  = () => ({ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 38, fontWeight: 700, color: C.ink, textAlign: "center", lineHeight: 1.2 });
+const inputStyle = () => ({
+  width: "100%", padding: "10px 10px", borderRadius: 10,
+  border: `1.5px solid ${C.border}`, background: C.cream,
+  fontSize: 14, color: C.ink, outline: "none", marginBottom: 10,
+  fontFamily: "'DM Sans', sans-serif",
+});
+const sectionTitle = () => ({
+  fontFamily: "'Playfair Display', serif", fontSize: "1.15rem",
+  fontWeight: 700, color: C.ink, marginBottom: 16,
+});
+const linkBtn = () => ({
+  background: "none", border: "none", color: C.terra,
+  fontWeight: 600, fontSize: 13, cursor: "pointer",
+  fontFamily: "'DM Sans', sans-serif", flexShrink: 0,
+});
+const ghostSmallBtn = () => ({
+  background: C.white, border: `1.5px solid ${C.border}`, color: C.muted,
+  borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer",
+  padding: "10px 8px", fontFamily: "'DM Sans', sans-serif",
+});
 
 /* ═══════════════════════════════════════════════
    IMAGE SEARCH (Openverse)
 ═══════════════════════════════════════════════ */
 async function searchImages(query) {
-  // Openverse — відкритий каталог CC-ліцензованих зображень, CORS enabled, без ключа
+  const clean = query
+    .toLowerCase()
+    .replace(/^(il|lo|la|i|gli|le|un|una|un')\s+/, "")
+    .trim();
+
+  const searchQuery = clean + " object";
+
   const url = "https://api.openverse.org/v1/images/?" + new URLSearchParams({
-    q: query,
-    page_size: "15",
+    q: searchQuery,
+    page_size: "20",
     mature: "false",
+    license: "cc0,by,by-sa"
   });
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+
+  const res = await fetch(url);
+
   if (!res.ok) throw new Error("HTTP " + res.status);
+
   const data = await res.json();
+
   return (data?.results || [])
-    .map(r => r.thumbnail || r.url)
-    .filter(Boolean);
+    .filter(r => r.thumbnail)
+    .map(r => r.thumbnail)
+    .slice(0, 12);
 }
 
 /* ═══════════════════════════════════════════════
    CARD EDIT ROW
 ═══════════════════════════════════════════════ */
-function CardEditRow({ card, num, onChange, onDelete, forceImageMode }) {
+function CardEditRow({ card, num, onChange, onDelete }) {
   const [mode, setMode]           = useState(card.image ? "image" : "text");
-  const effectiveMode = forceImageMode ? "image" : mode;
+  const effectiveMode = mode;
   const [searching, setSearching] = useState(false);
   const [results, setResults]     = useState([]);
   const [searchErr, setSearchErr] = useState("");
   const fileRef = useRef(null);
+
+  // Коли bulk-search встановлює image — НЕ перемикаємо mode примусово,
+  // бо текстовий режим тепер сам показує мініатюру знайденого зображення
 
   const switchMode = (m) => {
     setMode(m);
@@ -447,7 +629,7 @@ function CardEditRow({ card, num, onChange, onDelete, forceImageMode }) {
           value={card.word}
           onChange={e => onChange("word", e.target.value)}
           placeholder="Слово / фраза"
-          style={{ ...inputStyle, flex: 1, marginBottom: 0 }}
+          style={{ ...inputStyle(), flex: 1, marginBottom: 0 }}
         />
         <button onClick={onDelete} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, padding: "4px", flexShrink: 0, lineHeight: 1 }}>🗑️</button>
       </div>
@@ -467,12 +649,25 @@ function CardEditRow({ card, num, onChange, onDelete, forceImageMode }) {
 
       {/* Content */}
       {effectiveMode === "text" ? (
-        <input
-          value={card.translation || ""}
-          onChange={e => onChange("translation", e.target.value)}
-          placeholder="Переклад"
-          style={{ ...inputStyle, marginBottom: 0 }}
-        />
+        <>
+          <input
+            value={card.translation || ""}
+            onChange={e => onChange("translation", e.target.value)}
+            placeholder="Переклад"
+            style={{ ...inputStyle(), marginBottom: card.image ? 8 : 0 }}
+          />
+          {/* Показуємо знайдене bulk-пошуком зображення навіть коли mode=text */}
+          {card.image && (
+            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 8px",
+              background:C.cream, borderRadius:10, border:`1px solid ${C.border}` }}>
+              <img src={card.image} alt="" style={{ width:44, height:44, borderRadius:8, objectFit:"cover", flexShrink:0 }}
+                onError={e => { e.currentTarget.style.display="none"; }} />
+              <span style={{ fontSize:11, color:C.muted, flex:1 }}>Зображення встановлено автоматично</span>
+              <button onClick={() => { onChange("image",""); }}
+                style={{ background:"none", border:"none", cursor:"pointer", fontSize:15, padding:2, color:C.muted }}>✕</button>
+            </div>
+          )}
+        </>
       ) : (
         <div>
           {/* Current image preview */}
@@ -558,7 +753,7 @@ function CardEditRow({ card, num, onChange, onDelete, forceImageMode }) {
             value={card.image && !card.image.startsWith("data:") ? card.image : ""}
             onChange={e => { onChange("image", e.target.value); onChange("translation", ""); }}
             placeholder="URL зображення (https://...)"
-            style={{ ...inputStyle, marginBottom: 8, fontSize: 12 }}
+            style={{ ...inputStyle(), marginBottom: 8, fontSize: 12 }}
           />
 
           {/* File upload */}
@@ -646,7 +841,7 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
         height: 64, flexShrink: 0, padding: `0 ${SIDE}px`,
         display: "flex", alignItems: "center", gap: 10,
         borderBottom: `1px solid ${C.soft}`,
-        background: "rgba(250,248,243,0.95)", backdropFilter: "blur(8px)",
+        background: "rgba(238,243,251,0.95)", backdropFilter: "blur(8px)",
       }}>
         <button onClick={onClose} style={{
           background: "none", border: "none", cursor: "pointer",
@@ -669,8 +864,8 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
           {/* ── Bulk image search banner ── */}
           {cardsWithoutImage > 0 && (
             <div style={{
-              background: "#fdf2ee", borderRadius: 14, padding: "12px 14px",
-              marginBottom: 14, border: `1.5px solid ${C.terra}22`,
+              background: "#e8f0fb", borderRadius: 14, padding: "12px 14px",
+              marginBottom: 14, border: `1.5px solid ${C.terra}33`,
               display: "flex", flexDirection: "column", gap: 10,
             }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -736,7 +931,6 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
               num={i + 1}
               onChange={(field, val) => updateCard(card._id, field, val)}
               onDelete={() => deleteCard(card._id)}
-              forceImageMode={!!bulkProgress}
             />
           ))}
 
@@ -768,7 +962,7 @@ function normalize(s = "") {
     .replace(/ó/g,"o");
 }
 
-function PracticeView({ words, dictNames, dictName, displayName, switchDict, speak, activeLang }) {
+function PracticeView({ words, dictNames, dictName, displayName, switchDict, speak, activeLang, onDuoMode }) {
   // direction: "toUkr" = іноземна → укр | "toForeign" = укр → іноземна
   const [direction, setDirection] = useState("toUkr");
   const [qIdx, setQIdx]       = useState(0);
@@ -797,9 +991,7 @@ function PracticeView({ words, dictNames, dictName, displayName, switchDict, spe
     reset([...words].map((_, i) => i).sort(() => Math.random() - 0.5));
   }, [direction]);
 
-  useEffect(() => {
-    if (status === "idle") inputRef.current?.focus();
-  }, [qIdx, status]);
+  // Auto-focus disabled — не чіпаємо клавіатуру без запиту користувача
 
   if (!words.length) return (
     <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -885,6 +1077,13 @@ function PracticeView({ words, dictNames, dictName, displayName, switchDict, spe
             transition: "all 0.15s",
           }}>{label}</button>
         ))}
+        {onDuoMode && words.length >= 4 && (
+          <button onClick={onDuoMode} style={{
+            padding: "7px 12px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+            background: "#deeeff", border: `1.5px solid ${C.terra}`,
+            color: C.terra, cursor: "pointer", flexShrink: 0,
+          }}>🎮 Duo</button>
+        )}
       </div>
 
       {/* Progress */}
@@ -911,6 +1110,13 @@ function PracticeView({ words, dictNames, dictName, displayName, switchDict, spe
             Правильно: {score.correct} · Помилок: {score.wrong}
           </div>
           <Btn variant="terra" onClick={restart} style={{ marginTop: 8 }}>Почати знову →</Btn>
+          {onDuoMode && words.length >= 4 && (
+            <button onClick={onDuoMode} style={{
+              padding: "8px 20px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+              background: "#deeeff", border: `1.5px solid ${C.terra}`,
+              color: C.terra, cursor: "pointer", marginTop: 4,
+            }}>🎮 Duo Mode</button>
+          )}
         </div>
       ) : (
         <>
@@ -919,7 +1125,7 @@ function PracticeView({ words, dictNames, dictName, displayName, switchDict, spe
             flex: 1, minHeight: 0, borderRadius: 22,
             border: `2px solid ${sc.border}`,
             background: sc.bg,
-            boxShadow: "0 8px 40px rgba(26,26,46,0.11)",
+            boxShadow: "0 8px 40px rgba(30,60,120,0.09)",
             display: "flex", flexDirection: "column",
             alignItems: "center", justifyContent: "center",
             gap: 10, padding: "20px 24px",
@@ -975,9 +1181,9 @@ function PracticeView({ words, dictNames, dictName, displayName, switchDict, spe
               disabled={status !== "idle"}
               placeholder={toForeign ? `${LANGUAGES[activeLang]?.label}…` : "Переклад українською…"}
               style={{
-                ...inputStyle, flex: 1, marginBottom: 0,
+                ...inputStyle(), flex: 1, marginBottom: 0,
                 fontSize: 16, padding: "13px 14px",
-                background: status === "idle" ? "#faf9f6" : sc.bg,
+                background: status === "idle" ? C.cream : sc.bg,
                 borderColor: sc.border, color: sc.text,
                 transition: "all 0.2s",
               }}
@@ -994,7 +1200,7 @@ function PracticeView({ words, dictNames, dictName, displayName, switchDict, spe
             {status === "idle" ? (
               <>
                 <button onClick={() => { setStatus("revealed"); setStreak(0); setScore(s => ({...s, wrong: s.wrong+1})); }}
-                  style={{ ...ghostSmallBtn, flex: 1 }}>
+                  style={{ ...ghostSmallBtn(), flex: 1 }}>
                   👁 Показати
                 </button>
                 <Btn variant="primary" onClick={check} style={{ flex: 2 }}>
@@ -1012,12 +1218,6 @@ function PracticeView({ words, dictNames, dictName, displayName, switchDict, spe
     </div>
   );
 }
-
-const ghostSmallBtn = {
-  background: C.white, border: `1.5px solid ${C.border}`, color: C.muted,
-  borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer",
-  padding: "10px 8px", fontFamily: "'DM Sans', sans-serif",
-};
 
 /* ═══════════════════════════════════════════════
    GRAMMAR DATA
@@ -1555,7 +1755,7 @@ function GrammarView({ activeLang }) {
   /* ── LIST ── */
   if (screen === "list") return (
     <div style={{ padding: `16px ${SIDE}px 40px` }}>
-      <h2 style={sectionTitle}>📖 Граматика</h2>
+      <h2 style={sectionTitle()}>📖 Граматика</h2>
       <p style={{ fontSize: 12, color: C.muted, marginBottom: 20 }}>
         {LANGUAGES[activeLang]?.label} · {topics.length} тем
       </p>
@@ -1696,7 +1896,7 @@ function GrammarView({ activeLang }) {
               onKeyDown={e => { if (e.key === "Enter") { status === "idle" ? checkAnswer() : nextQ(); } }}
               disabled={status !== "idle"}
               placeholder="Введи відповідь…"
-              style={{ ...inputStyle, flex: 1, marginBottom: 0, fontSize: 16, padding: "13px 14px",
+              style={{ ...inputStyle(), flex: 1, marginBottom: 0, fontSize: 16, padding: "13px 14px",
                 background: sc.bg, borderColor: sc.border, color: sc.text, transition: "all 0.2s" }}
             />
           </div>
@@ -1727,7 +1927,7 @@ function Stat({ val, lbl }) {
     <div style={{
       background: C.white, border: `1.5px solid ${C.soft}`, borderRadius: 14,
       padding: "8px 16px", minWidth: 64, textAlign: "center",
-      boxShadow: "0 2px 8px rgba(26,26,46,0.08)",
+      boxShadow: "0 2px 8px rgba(30,60,120,0.07)",
     }}>
       <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 24, fontWeight: 700, color: C.terra, lineHeight: 1 }}>{val}</div>
       <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.muted, marginTop: 3 }}>{lbl}</div>
@@ -1776,6 +1976,205 @@ const TABS = [
 /* ═══════════════════════════════════════════════
    MAIN APP
 ═══════════════════════════════════════════════ */
+function DuoMode({ cards, onExit, appH }) {
+  const [index, setIndex] = useState(0);
+  const [options, setOptions] = useState([]);
+  const [chosen, setChosen]   = useState(null);
+  const [score, setScore]     = useState(0);
+
+  const current = cards[index];
+
+  useEffect(() => {
+    if (!current) return;
+    setChosen(null);
+    const pool = cards.map(c => c.translation).filter(t => t && t !== current.translation);
+    const shuffled = pool.sort(() => 0.5 - Math.random()).slice(0, 3);
+    const opts = [...shuffled, current.translation].sort(() => 0.5 - Math.random());
+    setOptions(opts);
+  }, [index]);
+
+  if (!current) {
+    return (
+      <div style={{
+        height: appH || "100svh", background: C.paper,
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: 20, padding: 32,
+      }}>
+        <div style={{ fontSize: 64 }}>🎉</div>
+        <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 28, fontWeight: 700, color: C.ink }}>Готово!</div>
+        <div style={{ fontSize: 18, color: C.muted }}>Результат: <b style={{ color: C.terra }}>{score}</b> / {cards.length}</div>
+        <button onClick={onExit} style={{
+          marginTop: 10, padding: "12px 32px", borderRadius: 14,
+          background: C.terra, color: "#fff", border: "none",
+          fontSize: 15, fontWeight: 700, cursor: "pointer",
+        }}>← Назад</button>
+      </div>
+    );
+  }
+
+  function choose(opt) {
+    if (chosen !== null) return;
+    setChosen(opt);
+    if (opt === current.translation) setScore(s => s + 1);
+    setTimeout(() => {
+      setChosen(null);
+      setIndex(i => i + 1);
+    }, 900);
+  }
+
+  return (
+    <div style={{
+      height: appH || "100svh", background: C.paper,
+      display: "flex", flexDirection: "column", gap: 0,
+      maxWidth: 520, margin: "0 auto",
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: "16px 20px 12px",
+        borderBottom: `1px solid ${C.soft}`,
+        background: "rgba(238,243,251,0.95)", backdropFilter: "blur(8px)",
+        display: "flex", alignItems: "center", gap: 12,
+      }}>
+        <button onClick={onExit} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: C.ink, padding: "2px 6px" }}>←</button>
+        <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 17, fontWeight: 700, color: C.ink, flex: 1 }}>Duo Mode</div>
+        <div style={{ fontSize: 13, color: C.muted }}>{index + 1} / {cards.length}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.terra }}>⭐ {score}</div>
+      </div>
+      {/* Progress */}
+      <div style={{ height: 4, background: C.soft }}>
+        <div style={{ height: "100%", width: `${(index / cards.length) * 100}%`, background: C.terra, transition: "width 0.4s" }} />
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, padding: "24px 20px", display: "flex", flexDirection: "column", gap: 20, overflowY: "auto" }}>
+        <div style={{ fontSize: 13, color: C.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em" }}>Що означає:</div>
+        <div style={{
+          background: C.white, borderRadius: 20, padding: "28px 24px",
+          border: `1.5px solid ${C.border}`,
+          boxShadow: "0 4px 20px rgba(30,60,120,0.08)",
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 14,
+        }}>
+          {current.image && (
+            <img src={current.image} style={{ maxWidth: 160, maxHeight: 120, borderRadius: 12, objectFit: "cover" }} />
+          )}
+          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 36, fontWeight: 700, color: C.ink, textAlign: "center" }}>
+            {current.word}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {options.map(o => {
+            const isCorrect = o === current.translation;
+            let bg = C.white, border = C.border, color = C.ink;
+            if (chosen !== null) {
+              if (isCorrect)            { bg = "#ddf5e4"; border = "#6cc98a"; color = "#1a6b34"; }
+              else if (o === chosen)    { bg = "#fde8e8"; border = "#f0a0a0"; color = "#9a2020"; }
+            }
+            return (
+              <button key={o} onClick={() => choose(o)} style={{
+                padding: "15px 18px", borderRadius: 14, fontSize: 16,
+                background: bg, border: `1.5px solid ${border}`, color,
+                cursor: chosen !== null ? "default" : "pointer",
+                fontWeight: 600, textAlign: "left", fontFamily: "'DM Sans',sans-serif",
+                transition: "all 0.15s",
+                boxShadow: chosen === null ? "0 2px 8px rgba(30,60,120,0.06)" : "none",
+              }}>
+                {o}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Рівень N потребує N²×60 XP — кожен рівень складніший
+function xpForLevel(lvl) { return lvl * lvl * 60; }
+function calcLevel(totalXp) {
+  let lvl = 1, xp = totalXp;
+  while (xp >= xpForLevel(lvl)) { xp -= xpForLevel(lvl); lvl++; }
+  return lvl;
+}
+function xpProgress(totalXp) {
+  let lvl = 1, xp = totalXp;
+  while (xp >= xpForLevel(lvl)) { xp -= xpForLevel(lvl); lvl++; }
+  return { level: lvl, current: xp, needed: xpForLevel(lvl) };
+}
+
+/* ═══════════════════════════════════════════════
+   LEVEL-UP FIREWORKS
+═══════════════════════════════════════════════ */
+function LevelUpBanner({ level, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 3000); return () => clearTimeout(t); }, []);
+
+  const particles = useRef(
+    Array.from({ length: 32 }, (_, i) => {
+      const angle = (i / 32) * 360 + (Math.random() - 0.5) * 22;
+      const dist  = 70 + Math.random() * 80;
+      const rad   = angle * Math.PI / 180;
+      return {
+        id: i,
+        tx: Math.cos(rad) * dist,
+        ty: Math.sin(rad) * dist,
+        size: 5 + Math.random() * 7,
+        color: ["#5b9cf0","#f0c050","#f07860","#60d880","#c580f8","#f8a050"][i % 6],
+        dur:  0.85 + Math.random() * 0.6,
+        del:  Math.random() * 0.3,
+        rot:  Math.random() * 360,
+      };
+    })
+  ).current;
+
+  const keyframes = particles.map(p =>
+    `@keyframes fw${p.id}{0%{transform:translate(0,0) scale(1) rotate(0deg);opacity:1}
+     100%{transform:translate(${p.tx}px,${p.ty + 60}px) scale(0) rotate(${p.rot}deg);opacity:0}}`
+  ).join('\n');
+
+  return (
+    <div onClick={onDone} style={{
+      position:"fixed",inset:0,zIndex:9999,
+      display:"flex",alignItems:"center",justifyContent:"center",
+      background:"rgba(0,0,0,0.5)",animation:"fwBg 0.2s ease forwards",cursor:"pointer",
+    }}>
+      <style>{`
+        @keyframes fwBg{from{opacity:0}to{opacity:1}}
+        @keyframes fwPop{0%{transform:scale(0.3);opacity:0}65%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+        ${keyframes}
+      `}</style>
+
+      <div style={{
+        position:"relative",background:C.white,borderRadius:28,
+        padding:"40px 52px",textAlign:"center",
+        boxShadow:"0 24px 64px rgba(0,0,0,0.4)",
+        animation:"fwPop 0.4s cubic-bezier(.2,1.5,.4,1) forwards",
+        overflow:"visible",
+      }}>
+        {/* Частинки */}
+        {particles.map(p => (
+          <div key={p.id} style={{
+            position:"absolute",top:"50%",left:"50%",
+            width:p.size,height:p.size * (Math.random() > 0.5 ? 2.2 : 1),
+            borderRadius: p.size / 2,
+            background:p.color,
+            animation:`fw${p.id} ${p.dur}s ${p.del}s ease-out forwards`,
+            transformOrigin:"center center",
+          }}/>
+        ))}
+        <div style={{fontSize:56,marginBottom:4}}>🎉</div>
+        <div style={{fontSize:12,fontWeight:700,letterSpacing:"0.14em",
+          textTransform:"uppercase",color:C.muted,marginBottom:4}}>Новий рівень!</div>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:64,
+          fontWeight:700,color:C.terra,lineHeight:1}}>{level}</div>
+        <div style={{fontSize:13,color:C.muted,marginTop:10}}>
+          До наступного рівня: {xpForLevel(level)} XP
+        </div>
+        <div style={{fontSize:11,color:C.faint,marginTop:6}}>торкнись щоб закрити</div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState(() => loadData());
   const [activeLang, setActiveLang] = useState(() => loadData().activeLang || "it");
@@ -1789,11 +2188,35 @@ export default function App() {
   const [newName, setNewName] = useState("");
   const [jsonInput, setJsonInput] = useState("");
   const [editingDict, setEditingDict] = useState(null);
+  const [theme, setTheme]     = useState(() => localStorage.getItem("ifc_theme") || "light");
+  const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem("ifc_fs")) || 1);
   const { toast, show: showToast } = useToast();
+
+  // Apply theme immediately — mutates C so all children see correct colors
+  Object.assign(C, THEMES[theme] || THEMES.light);
   const { speak, sysVoices, rvReady, selectedVoiceName, selectVoice } = useSpeech(activeLang);
   const { canInstall, install, installed, isIos } = useInstallPrompt();
   const [showIosModal, setShowIosModal] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
+  const [duoMode, setDuoMode] = useState(false);
+  const [levelUp, setLevelUp] = useState(null);
+  const appH = useViewportHeight();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const data = params.get("import");
+    if (!data) return;
+    try {
+      const decoded = JSON.parse(atob(data));
+      setData(d => ({
+        ...d,
+        dictionaries: {
+          ...d.dictionaries,
+          [decoded.name]: decoded.cards
+        }
+      }));
+    } catch {}
+  }, []);
 
   const dictNames = Object.keys(data.dictionaries).filter(k => k.startsWith(activeLang + ":"));
   const displayName = (k) => k.replace(/^[a-z]+:/, "");
@@ -1825,6 +2248,9 @@ export default function App() {
 
   const persist = useCallback((d) => { setData(d); saveData(d); }, []);
 
+  const changeTheme = (t) => { localStorage.setItem("ifc_theme", t); setTheme(t); };
+  const changeFontSize = (f) => { localStorage.setItem("ifc_fs", f); setFontSize(f); };
+
   let known = 0, learning = 0;
   words.forEach(w => { const p = data.progress[w.word]; if (p && p.interval > 7) known++; else learning++; });
   const pct = words.length ? Math.round((known / words.length) * 100) : 0;
@@ -1840,8 +2266,14 @@ export default function App() {
   const grade = (score) => {
     const nd = { ...data, progress: { ...data.progress } };
     nd.progress[word.word] = applyGrade(nd.progress[word.word], score);
-    nd.xp += 10; nd.level = Math.floor(nd.xp / 100) + 1;
-    persist(nd); goNext();
+    const xpGain = [0, 8, 15, 25][score] ?? 10;   // Знову=0, Важко=8, Добре=15, Легко=25
+    const oldLevel = calcLevel(nd.xp);
+    nd.xp = (nd.xp || 0) + xpGain;
+    const newLevel = calcLevel(nd.xp);
+    nd.level = newLevel;
+    persist(nd);
+    if (newLevel > oldLevel) setLevelUp(newLevel);
+    goNext();
   };
 
   const switchDict = (name) => {
@@ -1897,6 +2329,7 @@ export default function App() {
   }, [word, goNext]);
 
   /* ── CARDS TAB ── */
+  const xpProg = xpProgress(data.xp);
   const CardsTab = (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: `12px ${SIDE}px 12px`, gap: 10, minHeight: 0, height: "100%" }}>
       <div style={{ display: "flex", justifyContent: "center", gap: 8, flexShrink: 0 }}>
@@ -1905,11 +2338,25 @@ export default function App() {
         <Stat val={known} lbl="Вивчено" />
         <Stat val={learning} lbl="Вчиться" />
       </div>
+      {/* XP прогрес до наступного рівня */}
       <div style={{ flexShrink: 0 }}>
-        <div style={{ height: 4, background: C.soft, borderRadius: 4, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg,${C.terra},${C.gold})`, borderRadius: 4, transition: "width 0.5s" }} />
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+          <span style={{ fontSize:10, color:C.muted }}>XP до рівня {xpProg.level + 1}</span>
+          <span style={{ fontSize:10, color:C.muted }}>{xpProg.current} / {xpProg.needed}</span>
         </div>
-        <p style={{ textAlign: "right", fontSize: 10, color: C.muted, marginTop: 3 }}>{pct}% вивчено</p>
+        <div style={{ height: 5, background: C.soft, borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ height:"100%", borderRadius:4,
+            width:`${Math.min(100, (xpProg.current / xpProg.needed) * 100)}%`,
+            background:`linear-gradient(90deg,${C.terra},${C.gold})`,
+            transition:"width 0.5s" }} />
+        </div>
+      </div>
+      {/* % словника вивчено */}
+      <div style={{ flexShrink: 0 }}>
+        <div style={{ height: 3, background: C.soft, borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct}%`, background: C.sage, borderRadius: 4, transition: "width 0.5s" }} />
+        </div>
+        <p style={{ textAlign: "right", fontSize: 10, color: C.muted, marginTop: 2 }}>{pct}% словника вивчено</p>
       </div>
       <div style={{ display: "flex", gap: 8, overflowX: "auto", flexShrink: 0, scrollbarWidth: "none" }}>
         {dictNames.map(n => (
@@ -1933,19 +2380,23 @@ export default function App() {
               backImage={word.image}
               frontLabel={LANGUAGES[activeLang]?.label}
               cardKey={`${dictName}-${idx}`}
+              onNext={goNext}
+              onPrev={goPrev}
             />
           </div>
-          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-            <Btn onClick={goPrev} style={{ flex: 1 }}>← Назад</Btn>
-            <Btn onClick={() => speak(word.word)} style={{ flex: "0 0 48px" }}>🔊</Btn>
-            <Btn onClick={goNext} variant="primary" style={{ flex: 1 }}>Далі →</Btn>
+          <div style={{ display: "flex", justifyContent: "center", flexShrink: 0 }}>
+            <button onClick={() => speak(word.word)} style={{
+              padding: "8px 20px", borderRadius: 20,
+              background: C.soft, border: `1px solid ${C.border}`,
+              color: C.muted, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+            }}>🔊 Озвучити</button>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, flexShrink: 0 }}>
             {[["Знову",0,"again"],["Важко",1,"hard"],["Добре",2,"good"],["Легко",3,"easy"]].map(([l,s,v]) => (
               <Btn key={l} onClick={() => grade(s)} variant={v} style={{ padding: "11px 4px", textAlign: "center", width: "100%" }}>{l}</Btn>
             ))}
           </div>
-          <p style={{ textAlign: "center", fontSize: 10, color: C.faint, flexShrink: 0 }}>← → переміщення · 1-4 оцінка · S озвучити</p>
+          <p style={{ textAlign: "center", fontSize: 10, color: C.faint, flexShrink: 0 }}>⬅ свайп → наступна · торкніться → перевернути</p>
         </>
       ) : (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1965,6 +2416,7 @@ export default function App() {
     switchDict={switchDict}
     speak={speak}
     activeLang={activeLang}
+    onDuoMode={() => setDuoMode(true)}
   />;
 
   /* ── GRAMMAR TAB ── */
@@ -1973,13 +2425,13 @@ export default function App() {
   /* ── CREATE TAB ── */
   const CreateTab = (
     <div style={{ padding: `20px ${SIDE}px 40px` }}>
-      <h2 style={sectionTitle}>✏️ Створити словник</h2>
-      <input style={inputStyle} placeholder="Назва словника (напр. Урок 3)" value={newName} onChange={e => setNewName(e.target.value)} />
-      <div style={{ background: "#f5f3ee", borderRadius: 8, padding: "8px 12px", marginBottom: 8, fontFamily: "monospace", fontSize: 11, color: C.muted }}>
+      <h2 style={sectionTitle()}>✏️ Створити словник</h2>
+      <input style={inputStyle()} placeholder="Назва словника (напр. Урок 3)" value={newName} onChange={e => setNewName(e.target.value)} />
+      <div style={{ background: "#edf3fb", borderRadius: 8, padding: "8px 12px", marginBottom: 8, fontFamily: "monospace", fontSize: 11, color: C.muted }}>
         {`[{"word":"ciao","translation":"привіт"}, ...]`}<br/>або рядками: <b>ciao = привіт</b>
       </div>
       <textarea
-        style={{ ...inputStyle, height: 140, resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+        style={{ ...inputStyle(), height: 140, resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
         placeholder={"ciao = привіт\ngrazie = дякую\nbello = красивий"}
         value={jsonInput} onChange={e => setJsonInput(e.target.value)}
       />
@@ -1988,9 +2440,9 @@ export default function App() {
         <Btn onClick={createDict} variant="terra" style={{ flex: 1 }}>Створити →</Btn>
       </div>
 
-      <h2 style={{ ...sectionTitle, marginTop: 32 }}>📚 Мої словники</h2>
+      <h2 style={{ ...sectionTitle(), marginTop: 32 }}>📚 Мої словники</h2>
       {dictNames.map(n => (
-        <div key={n} style={{ background: C.white, borderRadius: 16, padding: "14px 14px", marginBottom: 10, border: `1.5px solid ${C.soft}`, boxShadow: "0 2px 8px rgba(26,26,46,0.06)" }}>
+        <div key={n} style={{ background: C.white, borderRadius: 16, padding: "14px 14px", marginBottom: 10, border: `1.5px solid ${C.soft}`, boxShadow: "0 2px 8px rgba(30,60,120,0.06)" }}>
           <div style={{ display: "flex", alignItems: "center" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, color: C.ink, fontSize: 15 }}>{displayName(n)}</div>
@@ -1999,10 +2451,14 @@ export default function App() {
                 {data.dictionaries[n].some(c => c.image) && " · 🖼️"}
               </div>
             </div>
-            <button onClick={() => { switchDict(n); setTab("cards"); }} style={linkBtn}>Відкрити</button>
-            <button onClick={() => setEditingDict(n)} style={{ ...linkBtn, marginLeft: 14 }}>✏️</button>
-            <button onClick={() => shareDict(n)} style={{ ...linkBtn, marginLeft: 14 }}>⬆️</button>
-            <button onClick={() => deleteDict(n)} style={{ ...linkBtn, color: "#c0392b", marginLeft: 14 }}>🗑️</button>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button onClick={() => setEditingDict(n)} style={{ padding: "12px 16px", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer", background: "#deeeff", border: `1.5px solid ${C.terra}55`, color: C.terra, flex: 1 }}>✏️ Редагувати</button>
+            <button onClick={() => {
+              const text = buildShareText(displayName(n), data.dictionaries[n]);
+              navigator.clipboard.writeText(text).then(() => showToast("📋 Скопійовано!"));
+            }} style={{ padding: "12px 16px", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer", background: "#e2eeff", border: `1.5px solid ${C.terra}55`, color: C.terra, flex: 1 }}>📋 Копіювати</button>
+            <button onClick={() => deleteDict(n)} style={{ padding: "12px 16px", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer", background: "#fdecea", border: "1.5px solid #f5c6c2", color: "#c0392b", flex: 1 }}>🗑 Видалити</button>
           </div>
         </div>
       ))}
@@ -2012,7 +2468,46 @@ export default function App() {
   /* ── SETTINGS TAB ── */
   const SettingsTab = (
     <div style={{ padding: `20px ${SIDE}px 40px` }}>
-      <h2 style={sectionTitle}>⚙️ Налаштування</h2>
+      <h2 style={sectionTitle()}>⚙️ Налаштування</h2>
+
+      {/* Theme */}
+      <div style={{ background: C.white, borderRadius: 16, padding: "16px 14px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: C.ink, marginBottom: 12 }}>🎨 Тема</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          {[["light","☀️ Синя"], ["dark","🌙 Темна"]].map(([key, label]) => (
+            <button key={key} onClick={() => changeTheme(key)} style={{
+              flex: 1, padding: "10px 8px", borderRadius: 12, fontSize: 13, fontWeight: 700,
+              border: `2px solid ${theme === key ? C.terra : C.border}`,
+              background: theme === key ? C.terra : C.cream,
+              color: theme === key ? "#fff" : C.muted,
+              cursor: "pointer", transition: "all 0.18s",
+            }}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Font size */}
+      <div style={{ background: C.white, borderRadius: 16, padding: "16px 14px", marginBottom: 12, border: `1.5px solid ${C.soft}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>🔤 Розмір шрифту</div>
+          <span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>
+            {fontSize === 0.85 ? "Малий" : fontSize === 1 ? "Стандарт" : fontSize === 1.15 ? "Більший" : "Великий"}
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={() => changeFontSize(Math.max(0.85, +(fontSize - 0.15).toFixed(2)))}
+            disabled={fontSize <= 0.85}
+            style={{ width: 40, height: 40, borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.cream, color: C.ink, fontSize: 20, cursor: fontSize <= 0.85 ? "not-allowed" : "pointer", opacity: fontSize <= 0.85 ? 0.4 : 1, fontWeight: 700, flexShrink: 0 }}>−</button>
+          <div style={{ flex: 1, height: 6, background: C.soft, borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ height: "100%", borderRadius: 3, background: C.terra, width: `${((fontSize - 0.85) / 0.6) * 100}%`, transition: "width 0.2s" }} />
+          </div>
+          <button onClick={() => changeFontSize(Math.min(1.45, +(fontSize + 0.15).toFixed(2)))}
+            disabled={fontSize >= 1.45}
+            style={{ width: 40, height: 40, borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.cream, color: C.ink, fontSize: 20, cursor: fontSize >= 1.45 ? "not-allowed" : "pointer", opacity: fontSize >= 1.45 ? 0.4 : 1, fontWeight: 700, flexShrink: 0 }}>+</button>
+        </div>
+        <div style={{ textAlign: "center", marginTop: 10, fontFamily: "'Playfair Display',serif", fontSize: `${38 * fontSize}px`, color: C.ink, lineHeight: 1.2, transition: "font-size 0.2s" }}>Aa</div>
+      </div>
+
       <SettingRow label="Авто-озвучення" desc="Говорити слово при переході до нової картки">
         <Toggle value={autoSpeak} onChange={setAutoSpeak} />
       </SettingRow>
@@ -2024,7 +2519,7 @@ export default function App() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
               {sysVoices.map(v => (
                 <div key={v.name} onClick={() => { selectVoice(v.name); speak(LANGUAGES[activeLang]?.sample || v.name); }}
-                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 8px", borderRadius: 10, cursor: "pointer", border: `1.5px solid ${selectedVoiceName === v.name ? C.terra : C.border}`, background: selectedVoiceName === v.name ? "#fdf2ee" : C.paper, transition: "all 0.15s" }}>
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 8px", borderRadius: 10, cursor: "pointer", border: `1.5px solid ${selectedVoiceName === v.name ? C.terra : C.border}`, background: selectedVoiceName === v.name ? "#deeeff" : C.paper, transition: "all 0.15s" }}>
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{v.name}</div>
                     <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{v.lang} · {v.localService ? "локальний" : "✨ онлайн"}</div>
@@ -2049,7 +2544,7 @@ export default function App() {
                 const isSel = selectedVoiceName === key;
                 return (
                   <div key={key} onClick={() => { if (!rvReady) return; selectVoice(key); speak(LANGUAGES[activeLang]?.sample || ""); }}
-                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 8px", borderRadius: 10, cursor: rvReady ? "pointer" : "not-allowed", border: `1.5px solid ${isSel ? C.terra : C.border}`, background: isSel ? "#fdf2ee" : rvReady ? C.paper : "#f8f8f8", opacity: rvReady ? 1 : 0.55, transition: "all 0.15s" }}>
+                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 8px", borderRadius: 10, cursor: rvReady ? "pointer" : "not-allowed", border: `1.5px solid ${isSel ? C.terra : C.border}`, background: isSel ? "#deeeff" : rvReady ? C.paper : "#f0f4fb", opacity: rvReady ? 1 : 0.55, transition: "all 0.15s" }}>
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{rv.label}</div>
                       <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>ResponsiveVoice · ☁️ онлайн</div>
@@ -2090,10 +2585,11 @@ export default function App() {
   const globalStyle = `
     @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@400;500;600&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { height: 100%; -webkit-text-size-adjust: none; text-size-adjust: none; }
-    body { background: ${C.paper}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%; }
-    #root { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-    .tab-scroll-outer { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    html { height: 100%; -webkit-text-size-adjust: none; text-size-adjust: none; touch-action: pan-y; }
+    body { background: ${C.paper}; color: ${C.ink}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%;
+           position: fixed; width: 100%; top: 0; left: 0; }
+    #root { height: var(--app-h, 100svh); overflow: hidden; display: flex; flex-direction: column; }
+    .tab-scroll-outer { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
     .tab-scroll { flex: 1; overflow-y: scroll; display: flex; flex-direction: column; scrollbar-width: none; -ms-overflow-style: none; }
     .tab-scroll::-webkit-scrollbar { width: 0; height: 0; background: transparent; }
     button { font-family: 'DM Sans', sans-serif; }
@@ -2101,10 +2597,22 @@ export default function App() {
   `;
 
   const outerDiv = {
-    height: "100vh", height: "100dvh", background: C.paper,
-    backgroundImage: `radial-gradient(ellipse 80% 50% at 15% 5%, rgba(192,88,58,0.07) 0%, transparent 60%), radial-gradient(ellipse 60% 40% at 85% 85%, rgba(107,143,113,0.08) 0%, transparent 60%)`,
+    height: appH, background: C.paper,
+    backgroundImage: `radial-gradient(ellipse 80% 50% at 15% 5%, rgba(58,109,216,0.07) 0%, transparent 60%), radial-gradient(ellipse 60% 40% at 85% 85%, rgba(74,144,196,0.09) 0%, transparent 60%)`,
     display: "flex", flexDirection: "column", maxWidth: 520, margin: "0 auto", overflow: "hidden",
+    zoom: fontSize,
   };
+
+  /* ── DUO MODE SCREEN ── */
+  if (duoMode) {
+    return (
+      <DuoMode
+        cards={words}
+        onExit={() => setDuoMode(false)}
+        appH={appH}
+      />
+    );
+  }
 
   /* ── CARD EDITOR SCREEN ── */
   if (editingDict !== null) {
@@ -2133,7 +2641,7 @@ export default function App() {
         <header style={{
           padding: `0 ${SIDE}px`, height: 64, flexShrink: 0,
           borderBottom: `1px solid ${C.soft}`,
-          background: "rgba(250,248,243,0.9)", backdropFilter: "blur(8px)",
+          background: "rgba(238,243,251,0.92)", backdropFilter: "blur(8px)",
           position: "sticky", top: 0, zIndex: 10,
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
         }}>
@@ -2176,7 +2684,7 @@ export default function App() {
         </div>
 
         {/* BOTTOM NAV */}
-        <nav style={{ display: "flex", borderTop: `1px solid ${C.soft}`, background: "rgba(250,248,243,0.95)", backdropFilter: "blur(8px)", position: "sticky", bottom: 0, flexShrink: 0 }}>
+        <nav style={{ display: "flex", borderTop: `1px solid ${C.soft}`, background: "rgba(238,243,251,0.97)", backdropFilter: "blur(8px)", position: "sticky", bottom: 0, flexShrink: 0 }}>
           {TABS.map(({ id, icon, label }) => (
             <button key={id} onClick={() => setTab(id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "14px 4px 12px", background: "none", border: "none", cursor: "pointer", gap: 2 }}>
               <span style={{ fontSize: 20 }}>{icon}</span>
@@ -2188,8 +2696,7 @@ export default function App() {
       </div>
 
       {toast && <Toast toast={toast} />}
-
-      {showIosModal && (
+      {levelUp && <LevelUpBanner level={levelUp} onDone={() => setLevelUp(null)} />}
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowIosModal(false)}>
           <div onClick={e => e.stopPropagation()} style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: "24px 24px 40px", width: "100%", maxWidth: 520, boxShadow: "0 -8px 40px rgba(0,0,0,0.2)" }}>
             <div style={{ textAlign: "center", marginBottom: 20 }}>
@@ -2247,26 +2754,8 @@ function SettingRow({ label, desc, children }) {
 
 function Toggle({ value, onChange }) {
   return (
-    <div onClick={() => onChange(!value)} style={{ width: 44, height: 24, borderRadius: 12, background: value ? C.sage : "#ddd", position: "relative", cursor: "pointer", transition: "background 0.2s", flexShrink: 0 }}>
-      <div style={{ position: "absolute", top: 3, left: value ? 23 : 3, width: 18, height: 18, borderRadius: "50%", background: C.white, transition: "left 0.2s", boxShadow: "0 1px 4px rgba(0,0,0,0.25)" }} />
+    <div onClick={() => onChange(!value)} style={{ width: 44, height: 24, borderRadius: 12, background: value ? C.sage : C.border, position: "relative", cursor: "pointer", transition: "background 0.2s", flexShrink: 0 }}>
+      <div style={{ position: "absolute", top: 3, left: value ? 23 : 3, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 4px rgba(0,0,0,0.25)" }} />
     </div>
   );
 }
-
-const inputStyle = {
-  width: "100%", padding: "10px 10px", borderRadius: 10,
-  border: `1.5px solid ${C.border}`, background: "#faf9f6",
-  fontSize: 14, color: C.ink, outline: "none", marginBottom: 10,
-  fontFamily: "'DM Sans', sans-serif",
-};
-
-const sectionTitle = {
-  fontFamily: "'Playfair Display', serif", fontSize: "1.15rem",
-  fontWeight: 700, color: C.ink, marginBottom: 16,
-};
-
-const linkBtn = {
-  background: "none", border: "none", color: C.terra,
-  fontWeight: 600, fontSize: 13, cursor: "pointer",
-  fontFamily: "'DM Sans', sans-serif", flexShrink: 0,
-};
