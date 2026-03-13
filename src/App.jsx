@@ -2196,7 +2196,7 @@ export default function App() {
   Object.assign(C, THEMES[theme] || THEMES.light);
   const { speak, sysVoices, rvReady, selectedVoiceName, selectVoice } = useSpeech(activeLang);
   const { canInstall, install, installed, isIos } = useInstallPrompt();
-  const [showIosModal, setShowIosModal] = useState(false);
+  const [showIosModal, setShowIosModal] = useState(true);
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [duoMode, setDuoMode] = useState(false);
   const [levelUp, setLevelUp] = useState(null);
@@ -2561,7 +2561,13 @@ export default function App() {
         )}
         {sysVoices.length === 0 && !rvReady && <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>Голоси завантажуються...</div>}
       </div>
-     
+      {!installed ? (
+        <SettingRow label="📲 Додати на екран" desc={isIos ? "Інструкція для Safari на iPhone" : "Встановити як додаток на телефон"}>
+          <Btn variant="terra" onClick={() => { if (isIos) setShowIosModal(true); else if (canInstall) install(); }}>{isIos ? "Як?" : "Встановити"}</Btn>
+        </SettingRow>
+      ) : (
+        <SettingRow label="✅ Додаток встановлено" desc="Відкривай з домашнього екрану"><span style={{ fontSize: 22 }}>🎉</span></SettingRow>
+      )}
       <SettingRow label="Скинути прогрес" desc="Видалити весь прогрес навчання та XP">
         <Btn variant="again" onClick={() => { if (window.confirm("Скинути весь прогрес?")) { persist({ ...data, progress: {}, xp: 0, level: 1 }); showToast("✅ Прогрес скинуто"); } }}>Скинути</Btn>
       </SettingRow>
@@ -2694,7 +2700,24 @@ export default function App() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowIosModal(false)}>
           <div onClick={e => e.stopPropagation()} style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: "24px 24px 40px", width: "100%", maxWidth: 520, boxShadow: "0 -8px 40px rgba(0,0,0,0.2)" }}>
             <div style={{ textAlign: "center", marginBottom: 20 }}>
-          
+              <div style={{ fontSize: 36, marginBottom: 8 }}>📲</div>
+              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.ink }}>Додати на екран</div>
+              <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>Три кроки в Safari</div>
+            </div>
+            {[
+              { icon: "⬆️", text: 'Натисни кнопку "Поділитись"', sub: "квадрат зі стрілкою внизу Safari" },
+              { icon: "➕", text: 'Обери "На екран Дому"', sub: "прокрути список вниз якщо не видно" },
+              { icon: "✅", text: "Натисни «Додати»", sub: "іконка з'явиться на домашньому екрані" },
+            ].map(({ icon, text, sub }, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: C.terra, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>{icon}</div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: C.ink }}>{text}</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>{sub}</div>
+                </div>
+              </div>
+            ))}
+            <button onClick={() => setShowIosModal(false)} style={{ width: "100%", padding: "13px", borderRadius: 12, background: C.terra, color: C.white, border: "none", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 4 }}>Зрозуміло!</button>
           </div>
         </div>
       )}
@@ -2727,7 +2750,7 @@ function SettingRow({ label, desc, children }) {
       {children}
     </div>
   );
-} 
+}
 
 function Toggle({ value, onChange }) {
   return (
