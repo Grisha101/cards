@@ -2561,13 +2561,7 @@ export default function App() {
         )}
         {sysVoices.length === 0 && !rvReady && <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>Голоси завантажуються...</div>}
       </div>
-      {!installed ? (
-        <SettingRow label="📲 Додати на екран" desc={isIos ? "Інструкція для Safari на iPhone" : "Встановити як додаток на телефон"}>
-          <Btn variant="terra" onClick={() => { if (isIos) setShowIosModal(true); else if (canInstall) install(); }}>{isIos ? "Як?" : "Встановити"}</Btn>
-        </SettingRow>
-      ) : (
-        <SettingRow label="✅ Додаток встановлено" desc="Відкривай з домашнього екрану"><span style={{ fontSize: 22 }}>🎉</span></SettingRow>
-      )}
+     
       <SettingRow label="Скинути прогрес" desc="Видалити весь прогрес навчання та XP">
         <Btn variant="again" onClick={() => { if (window.confirm("Скинути весь прогрес?")) { persist({ ...data, progress: {}, xp: 0, level: 1 }); showToast("✅ Прогрес скинуто"); } }}>Скинути</Btn>
       </SettingRow>
@@ -2733,7 +2727,7 @@ function SettingRow({ label, desc, children }) {
       {children}
     </div>
   );
-}
+} 
 
 function Toggle({ value, onChange }) {
   return (
