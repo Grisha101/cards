@@ -2697,27 +2697,14 @@ export default function App() {
 
       {toast && <Toast toast={toast} />}
       {levelUp && <LevelUpBanner level={levelUp} onDone={() => setLevelUp(null)} />}
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "none", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowIosModal(true)}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowIosModal(true)}>
           <div onClick={e => e.stopPropagation()} style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: "24px 24px 40px", width: "100%", maxWidth: 520, boxShadow: "0 -8px 40px rgba(0,0,0,0.2)" }}>
             <div style={{ textAlign: "center", marginBottom: 20 }}>
               <div style={{ fontSize: 36, marginBottom: 8 }}>📲</div>
               <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.ink }}>Додати на екран</div>
               <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>Три кроки в Safari</div>
             </div>
-            {[
-              { icon: "⬆️", text: 'Натисни кнопку "Поділитись"', sub: "квадрат зі стрілкою внизу Safari" },
-              { icon: "➕", text: 'Обери "На екран Дому"', sub: "прокрути список вниз якщо не видно" },
-              { icon: "✅", text: "Натисни «Додати»", sub: "іконка з'явиться на домашньому екрані" },
-            ].map(({ icon, text, sub }, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 12, background: C.terra, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>{icon}</div>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 14, color: C.ink }}>{text}</div>
-                  <div style={{ fontSize: 12, color: C.muted }}>{sub}</div>
-                </div>
-              </div>
-            ))}
-            <button onClick={() => setShowIosModal(true)} style={{ width: "100%", padding: "13px", borderRadius: 12, background: C.terra, color: C.white, border: "none", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 4 }}>Зрозуміло!</button>
+            
           </div>
         </div>
       )}
