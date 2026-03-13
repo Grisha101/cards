@@ -2697,7 +2697,7 @@ export default function App() {
 
       {toast && <Toast toast={toast} />}
       {levelUp && <LevelUpBanner level={levelUp} onDone={() => setLevelUp(null)} />}
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowIosModal(false)}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowIosModal(true)}>
           <div onClick={e => e.stopPropagation()} style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: "24px 24px 40px", width: "100%", maxWidth: 520, boxShadow: "0 -8px 40px rgba(0,0,0,0.2)" }}>
             <div style={{ textAlign: "center", marginBottom: 20 }}>
               <div style={{ fontSize: 36, marginBottom: 8 }}>📲</div>
@@ -2717,7 +2717,7 @@ export default function App() {
                 </div>
               </div>
             ))}
-            <button onClick={() => setShowIosModal(false)} style={{ width: "100%", padding: "13px", borderRadius: 12, background: C.terra, color: C.white, border: "none", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 4 }}>Зрозуміло!</button>
+            <button onClick={() => setShowIosModal(true)} style={{ width: "100%", padding: "13px", borderRadius: 12, background: C.terra, color: C.white, border: "none", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 4 }}>Зрозуміло!</button>
           </div>
         </div>
       )}
