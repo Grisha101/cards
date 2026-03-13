@@ -336,43 +336,26 @@ function useInstallPrompt() {
    VIEWPORT HOOK — блокує зум, тримає висоту
 ═══════════════════════════════════════════════ */
 function useViewportHeight() {
-  const [vh, setVh] = useState(() => window.innerHeight);
-
   useEffect(() => {
-    // 1. Блокуємо зум — переписуємо/додаємо мета-тег
     const existing = document.querySelector('meta[name="viewport"]');
     const content = "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no";
-    if (existing) {
-      existing.setAttribute("content", content);
-    } else {
+    if (existing) existing.setAttribute("content", content);
+    else {
       const meta = document.createElement("meta");
-      meta.name = "viewport";
-      meta.content = content;
+      meta.name = "viewport"; meta.content = content;
       document.head.prepend(meta);
     }
-
-    // 2. visualViewport — дає реальну висоту без клавіатури
-    const vv = window.visualViewport;
-    if (!vv) return;
-
-    const update = () => {
-      // offsetTop — скільки сторінка "з'їхала" вгору через клавіатуру
-      const h = Math.round(vv.height + vv.offsetTop);
-      setVh(h);
-      // Також пишемо CSS-змінну для body, щоб #root міг її використати
-      document.documentElement.style.setProperty("--app-h", h + "px");
+    const setH = () => {
+      const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      const hPx = Math.round(h);
+      const kbdPx = Math.max(0, window.innerHeight - hPx);
+      document.documentElement.style.setProperty("--app-h", hPx + "px");
+      document.documentElement.style.setProperty("--kbd-h", kbdPx + "px");
     };
-
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-    };
+    setH();
+    window.visualViewport?.addEventListener("resize", setH);
+    return () => window.visualViewport?.removeEventListener("resize", setH);
   }, []);
-
-  return vh;
 }
 
 /* ═══════════════════════════════════════════════
@@ -751,7 +734,7 @@ function CardEditRow({ card, num, onChange, onDelete }) {
           {/* Manual URL */}
           <input
             value={card.image && !card.image.startsWith("data:") ? card.image : ""}
-            onChange={e => { onChange("image", e.target.value); onChange("translation", ""); }}
+            onChange={e => onChange("image", e.target.value)}
             placeholder="URL зображення (https://...)"
             style={{ ...inputStyle(), marginBottom: 8, fontSize: 12 }}
           />
@@ -806,7 +789,7 @@ function CardEditor({ cards, dictLabel, onSave, onClose }) {
         const imgs = await searchImages(card.word.trim());
         if (imgs.length > 0) {
           setEditCards(cs => cs.map(c =>
-            c._id === card._id ? { ...c, image: imgs[0], translation: "" } : c
+            c._id === card._id ? { ...c, image: imgs[0] } : c
           ));
         }
       } catch {
@@ -1045,7 +1028,14 @@ function PracticeView({ words, dictNames, dictName, displayName, switchDict, spe
   const sc = statusColors[status];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: `12px ${SIDE}px 12px` }}>
+    <div style={{
+      display: "flex", flexDirection: "column", height: "100%",
+      padding: `12px ${SIDE}px 12px`,
+      // Піднімаємо вміст вгору коли відкрита клавіатура — тільки для цієї вкладки
+      paddingBottom: `calc(12px + var(--kbd-h, 0px) / var(--font-scale, 1))`,
+      transition: "padding-bottom 0.28s ease",
+      boxSizing: "border-box",
+    }}>
 
       {/* Dict chips */}
       <div style={{ display: "flex", gap: 8, overflowX: "auto", flexShrink: 0, scrollbarWidth: "none", marginBottom: 10 }}>
@@ -1976,7 +1966,7 @@ const TABS = [
 /* ═══════════════════════════════════════════════
    MAIN APP
 ═══════════════════════════════════════════════ */
-function DuoMode({ cards, onExit, appH }) {
+function DuoMode({ cards, onExit }) {
   const [index, setIndex] = useState(0);
   const [options, setOptions] = useState([]);
   const [chosen, setChosen]   = useState(null);
@@ -1996,7 +1986,7 @@ function DuoMode({ cards, onExit, appH }) {
   if (!current) {
     return (
       <div style={{
-        height: appH || "100svh", background: C.paper,
+        height: "var(--app-h, 100svh)", background: C.paper,
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
         gap: 20, padding: 32,
       }}>
@@ -2024,7 +2014,7 @@ function DuoMode({ cards, onExit, appH }) {
 
   return (
     <div style={{
-      height: appH || "100svh", background: C.paper,
+      height: "var(--app-h, 100svh)", background: C.paper,
       display: "flex", flexDirection: "column", gap: 0,
       maxWidth: 520, margin: "0 auto",
     }}>
@@ -2196,11 +2186,11 @@ export default function App() {
   Object.assign(C, THEMES[theme] || THEMES.light);
   const { speak, sysVoices, rvReady, selectedVoiceName, selectVoice } = useSpeech(activeLang);
   const { canInstall, install, installed, isIos } = useInstallPrompt();
-  const [showIosModal, setShowIosModal] = useState(true);
+  const [showIosModal, setShowIosModal] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [duoMode, setDuoMode] = useState(false);
   const [levelUp, setLevelUp] = useState(null);
-  const appH = useViewportHeight();
+  useViewportHeight();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2588,7 +2578,7 @@ export default function App() {
     html { height: 100%; -webkit-text-size-adjust: none; text-size-adjust: none; touch-action: pan-y; }
     body { background: ${C.paper}; color: ${C.ink}; font-family: 'DM Sans', sans-serif; overflow: hidden; height: 100%;
            position: fixed; width: 100%; top: 0; left: 0; }
-    #root { height: var(--app-h, 100svh); overflow: hidden; display: flex; flex-direction: column; }
+    #root { height: var(--app-h, 100dvh); overflow: hidden; display: flex; flex-direction: column; }
     .tab-scroll-outer { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
     .tab-scroll { flex: 1; overflow-y: scroll; display: flex; flex-direction: column; scrollbar-width: none; -ms-overflow-style: none; }
     .tab-scroll::-webkit-scrollbar { width: 0; height: 0; background: transparent; }
@@ -2597,7 +2587,10 @@ export default function App() {
   `;
 
   const outerDiv = {
-    height: appH, background: C.paper,
+    // Стабільна висота — клавіатура НЕ впливає (тільки Практика адаптується через --kbd-h)
+    height: `calc(var(--app-h, 100dvh) / ${fontSize})`,
+    "--font-scale": fontSize,
+    background: C.paper,
     backgroundImage: `radial-gradient(ellipse 80% 50% at 15% 5%, rgba(58,109,216,0.07) 0%, transparent 60%), radial-gradient(ellipse 60% 40% at 85% 85%, rgba(74,144,196,0.09) 0%, transparent 60%)`,
     display: "flex", flexDirection: "column", maxWidth: 520, margin: "0 auto", overflow: "hidden",
     zoom: fontSize,
@@ -2609,7 +2602,6 @@ export default function App() {
       <DuoMode
         cards={words}
         onExit={() => setDuoMode(false)}
-        appH={appH}
       />
     );
   }
@@ -2697,15 +2689,31 @@ export default function App() {
 
       {toast && <Toast toast={toast} />}
       {levelUp && <LevelUpBanner level={levelUp} onDone={() => setLevelUp(null)} />}
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "none", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowIosModal(true)}>
+      {showIosModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowIosModal(false)}>
           <div onClick={e => e.stopPropagation()} style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: "24px 24px 40px", width: "100%", maxWidth: 520, boxShadow: "0 -8px 40px rgba(0,0,0,0.2)" }}>
             <div style={{ textAlign: "center", marginBottom: 20 }}>
               <div style={{ fontSize: 36, marginBottom: 8 }}>📲</div>
-
+              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.ink }}>Додати на екран</div>
+              <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>Три кроки в Safari</div>
             </div>
-            
+            {[
+              { icon: "⬆️", text: 'Натисни кнопку "Поділитись"', sub: "квадрат зі стрілкою внизу Safari" },
+              { icon: "➕", text: 'Обери "На екран Дому"', sub: "прокрути список вниз якщо не видно" },
+              { icon: "✅", text: "Натисни «Додати»", sub: "іконка з'явиться на домашньому екрані" },
+            ].map(({ icon, text, sub }, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: C.terra, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>{icon}</div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: C.ink }}>{text}</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>{sub}</div>
+                </div>
+              </div>
+            ))}
+            <button onClick={() => setShowIosModal(false)} style={{ width: "100%", padding: "13px", borderRadius: 12, background: C.terra, color: C.white, border: "none", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 4 }}>Зрозуміло!</button>
           </div>
         </div>
+      )}
     </>
   );
 }
